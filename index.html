@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Abhishek Ojha — Embedded Linux & Board Bring‑Up</title>
+    <meta name="description"
+        content="In-depth articles on Embedded Linux, PCIe, board bring-up, and driver debugging by Abhishek Ojha.">
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        /* =====================================================
+           Reset & Design Tokens
+        ===================================================== */
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        :root {
+            --bg: #ffffff;
+            --surface: #f5f5f7;
+            --surface2: #e8e8ed;
+            --border: #d2d2d7;
+            --text: #1d1d1f;
+            --text2: #6e6e73;
+            --text3: #a1a1a6;
+            --accent: #0071e3;
+            --accent-h: #0077ed;
+            --green: #27ae60;
+            --purple: #8e44ad;
+            --nav-h: 52px;
+            --max-w: 980px;
+            --r: 18px;
+            --ease: cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        html {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
+            font-size: 17px;
+            -webkit-font-smoothing: antialiased;
+            scroll-behavior: smooth;
+            background: var(--bg);
+            color: var(--text);
+        }
+
+        body { min-height: 100vh; overflow-x: hidden; }
+        a    { color: inherit; text-decoration: none; }
+
+        /* =====================================================
+           Nav (frosted glass)
+        ===================================================== */
+        .nav {
+            position: fixed;
+            inset: 0 0 auto 0;
+            height: var(--nav-h);
+            z-index: 9999;
+            background: rgba(255,255,255,0.82);
+            backdrop-filter: saturate(180%) blur(20px);
+            -webkit-backdrop-filter: saturate(180%) blur(20px);
+            border-bottom: 1px solid rgba(0,0,0,0.08);
+        }
+        .nav__inner {
+            max-width: var(--max-w);
+            margin: 0 auto;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 22px;
+        }
+        .nav__logo {
+            font-size: 0.95rem;
+            font-weight: 600;
+            letter-spacing: -0.01em;
+            transition: opacity .25s;
+        }
+        .nav__logo:hover { opacity: 0.6; }
+        .nav__links {
+            display: flex;
+            align-items: center;
+            gap: 28px;
+            list-style: none;
+        }
+        .nav__links a {
+            font-size: 0.76rem;
+            color: var(--text2);
+            transition: color .2s;
+        }
+        .nav__links a:hover { color: var(--accent); }
+
+        /* =====================================================
+           Hero
+        ===================================================== */
+        .hero {
+            padding-top: calc(var(--nav-h) + 80px);
+            padding-bottom: 72px;
+            text-align: center;
+            max-width: var(--max-w);
+            margin: 0 auto;
+            padding-left: 22px;
+            padding-right: 22px;
+        }
+        .hero__eyebrow {
+            font-size: 0.74rem;
+            font-weight: 600;
+            color: var(--accent);
+            letter-spacing: .12em;
+            text-transform: uppercase;
+            display: inline-block;
+            margin-bottom: 14px;
+        }
+        .hero__title {
+            font-size: clamp(2.1rem, 5vw, 3.4rem);
+            font-weight: 700;
+            letter-spacing: -0.03em;
+            line-height: 1.07;
+            margin-bottom: 16px;
+        }
+        .hero__subtitle {
+            font-size: clamp(0.95rem, 2vw, 1.18rem);
+            font-weight: 300;
+            color: var(--text2);
+            line-height: 1.65;
+            max-width: 520px;
+            margin: 0 auto 36px;
+        }
+        .hero__actions {
+            display: flex;
+            justify-content: center;
+            gap: 14px;
+            flex-wrap: wrap;
+        }
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            font-size: 0.88rem;
+            font-weight: 500;
+            padding: 12px 24px;
+            border-radius: 980px;
+            transition: transform .25s var(--ease), box-shadow .25s var(--ease), background .2s;
+        }
+        .btn--primary {
+            background: var(--accent);
+            color: #fff;
+            box-shadow: 0 4px 18px rgba(0,113,227,.24);
+        }
+        .btn--primary:hover {
+            background: var(--accent-h);
+            transform: translateY(-1px);
+            box-shadow: 0 8px 28px rgba(0,113,227,.32);
+        }
+        .btn--secondary {
+            background: var(--surface);
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+        .btn--secondary:hover { background: var(--surface2); transform: translateY(-1px); }
+
+        /* =====================================================
+           Section wrapper
+        ===================================================== */
+        .section {
+            max-width: var(--max-w);
+            margin: 0 auto;
+            padding: 64px 22px;
+        }
+        .section + .section {
+            border-top: 1px solid var(--border);
+        }
+        .section__head {
+            margin-bottom: 36px;
+        }
+        .section__label {
+            font-size: 0.72rem;
+            font-weight: 600;
+            color: var(--text3);
+            letter-spacing: .1em;
+            text-transform: uppercase;
+            margin-bottom: 6px;
+        }
+        .section__title {
+            font-size: 1.75rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+        }
+        .section__desc {
+            margin-top: 8px;
+            font-size: 0.9rem;
+            color: var(--text2);
+            line-height: 1.6;
+            max-width: 560px;
+        }
+        .divider { height: 1px; background: var(--border); }
+
+        /* =====================================================
+           Card grid
+        ===================================================== */
+        .card-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+            gap: 18px;
+        }
+
+        /* =====================================================
+           Post Card (Blogs & Case Studies)
+        ===================================================== */
+        .post-card {
+            position: relative;
+            background: var(--surface);
+            border-radius: var(--r);
+            border: 1px solid transparent;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            transition: transform .28s var(--ease), box-shadow .28s var(--ease), border-color .2s;
+        }
+        .post-card:hover {
+            transform: translateY(-4px) scale(1.01);
+            box-shadow: 0 18px 50px rgba(0,0,0,.1);
+            border-color: var(--border);
+        }
+        .post-card__overlay {
+            position: absolute;
+            inset: 0;
+            z-index: 1;
+        }
+        .post-card__icon-wrap {
+            height: 150px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #1c1c1e 0%, #2c2c2e 100%);
+            position: relative;
+            overflow: hidden;
+        }
+        .post-card__icon-wrap::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(135deg, rgba(0, 113, 227, 0.15) 0%, transparent 60%);
+        }
+        .post-card__icon {
+            width: 58px;
+            height: 58px;
+            position: relative;
+            z-index: 1;
+        }
+        /* Case study gets a different gradient */
+        .post-card--case .post-card__icon-wrap {
+            background: linear-gradient(135deg, #1a0a2e 0%, #2d1b4e 100%);
+        }
+        .post-card--case .post-card__icon-wrap::after {
+            background: linear-gradient(135deg, rgba(142, 68, 173, 0.2) 0%, transparent 60%);
+        }
+        .post-card__body {
+            padding: 20px 22px 22px;
+            display: flex;
+            flex-direction: column;
+            gap: 9px;
+            flex: 1;
+        }
+        .post-card__tag {
+            display: inline-block;
+            font-size: 0.67rem;
+            font-weight: 600;
+            letter-spacing: .06em;
+            text-transform: uppercase;
+            padding: 3px 9px;
+            border-radius: 980px;
+            width: fit-content;
+            background: #e8f0fe;
+            color: #1a73e8;
+        }
+        .post-card--case .post-card__tag {
+            background: #f3e8fe;
+            color: #7b2fbe;
+        }
+        .post-card__title {
+            font-size: 1.05rem;
+            font-weight: 600;
+            letter-spacing: -0.01em;
+            line-height: 1.35;
+        }
+        .post-card__excerpt {
+            font-size: 0.8rem;
+            color: var(--text2);
+            line-height: 1.6;
+            flex: 1;
+        }
+        .post-card__meta {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-top: 6px;
+        }
+        .post-card__date {
+            font-size: 0.7rem;
+            color: var(--text3);
+        }
+        .post-card__link {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 0.78rem;
+            font-weight: 500;
+            color: var(--accent);
+            transition: gap .2s;
+        }
+        .post-card:hover .post-card__link { gap: 8px; }
+
+        /* =====================================================
+           Project Card
+        ===================================================== */
+        .proj-card {
+            position: relative;
+            background: var(--surface);
+            border-radius: var(--r);
+            border: 1px solid transparent;
+            padding: 24px 26px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            transition: transform .28s var(--ease), box-shadow .28s var(--ease), border-color .2s;
+        }
+        .proj-card:hover {
+            transform: translateY(-4px) scale(1.01);
+            box-shadow: 0 18px 50px rgba(0,0,0,.09);
+            border-color: var(--border);
+        }
+        .proj-card__overlay {
+            position: absolute;
+            inset: 0;
+            z-index: 1;
+        }
+        .proj-card__top {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .proj-card__icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            background: var(--accent);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            flex-shrink: 0;
+        }
+        .proj-card__icon svg { width: 20px; height: 20px; }
+        .proj-card__gh {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 0.72rem;
+            color: var(--text3);
+            background: var(--surface2);
+            padding: 4px 10px;
+            border-radius: 980px;
+            border: 1px solid var(--border);
+        }
+        .proj-card__gh svg { width: 13px; height: 13px; }
+        .proj-card__name {
+            font-size: 1rem;
+            font-weight: 600;
+            letter-spacing: -0.01em;
+        }
+        .proj-card__desc {
+            font-size: 0.8rem;
+            color: var(--text2);
+            line-height: 1.6;
+            flex: 1;
+        }
+        .proj-card__langs {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+        .lang-badge {
+            font-size: 0.65rem;
+            font-weight: 600;
+            letter-spacing: .04em;
+            padding: 3px 8px;
+            border-radius: 980px;
+            background: var(--surface2);
+            color: var(--text2);
+            border: 1px solid var(--border);
+        }
+        .lang-badge--c     { background: #dbeafe; color: #1d4ed8; border-color: #bfdbfe; }
+        .lang-badge--rust  { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+        .lang-badge--py    { background: #dcfce7; color: #166534; border-color: #bbf7d0; }
+        .lang-badge--shell { background: #f0fdf4; color: #15803d; border-color: #d1fae5; }
+
+        /* =====================================================
+           Empty state
+        ===================================================== */
+        .empty {
+            grid-column: 1 / -1;
+            text-align: center;
+            padding: 48px 24px;
+            color: var(--text3);
+            font-size: 0.88rem;
+        }
+        .empty svg {
+            width: 40px;
+            height: 40px;
+            margin: 0 auto 12px;
+            display: block;
+            opacity: 0.35;
+        }
+
+        /* =====================================================
+           Footer
+        ===================================================== */
+        .footer {
+            background: var(--surface);
+            border-top: 1px solid var(--border);
+            padding: 36px 22px;
+            text-align: center;
+        }
+        .footer__inner { max-width: var(--max-w); margin: 0 auto; }
+        .footer__name  { font-size: 0.82rem; font-weight: 500; margin-bottom: 5px; }
+        .footer__copy  { font-size: 0.7rem; color: var(--text3); }
+
+        /* =====================================================
+           Scroll fade-in
+        ===================================================== */
+        .fade-in {
+            opacity: 0;
+            transform: translateY(22px);
+            transition: opacity .55s ease, transform .55s ease;
+        }
+        .fade-in.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        /* =====================================================
+           Responsive
+        ===================================================== */
+        @media (max-width: 600px) {
+            .nav__links { display: none; }
+            .card-grid  { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- ===================================================
+         Navigation
+    =================================================== -->
+    <nav class="nav" aria-label="Site navigation">
+        <div class="nav__inner">
+            <a class="nav__logo" href="/">Abhishek Ojha</a>
+            <ul class="nav__links">
+                <li><a href="#blogs">Blogs</a></li>
+                <li><a href="#case-studies">Case Studies</a></li>
+                <li><a href="#projects">Projects</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <!-- ===================================================
+         Hero
+    =================================================== -->
+    <section class="hero">
+        <span class="hero__eyebrow">Embedded Systems Engineer</span>
+        <h1 class="hero__title">Embedded Linux &amp;<br>Board Bring‑Up Blog</h1>
+        <p class="hero__subtitle">
+            Deep-dive articles on PCIe, device drivers, Linux kernel internals,
+            and hardware bring-up — written by an engineer, for engineers.
+        </p>
+        <div class="hero__actions">
+            <a href="#blogs" class="btn btn--primary">
+                Read the Latest
+                <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" fill="none"
+                    viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
+            </a>
+            <a href="#projects" class="btn btn--secondary">
+                View Projects
+                <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" fill="none"
+                    viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round"
+                        d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+                </svg>
+            </a>
+        </div>
+    </section>
+
+    <div style="max-width:var(--max-w);margin:0 auto;padding:0 22px;">
+        <div class="divider"></div>
+    </div>
+
+    <!-- ===================================================
+         Blogs
+    =================================================== -->
+    <section class="section" id="blogs">
+        <div class="section__head fade-in">
+            <p class="section__label">Technical Articles</p>
+            <h2 class="section__title">Blogs</h2>
+            <p class="section__desc">In-depth engineering posts on Linux kernel, PCIe, drivers, and board bring-up.</p>
+        </div>
+
+        <div class="card-grid">
+
+            <!-- PCIe Introduction -->
+            <article class="post-card fade-in">
+                <a class="post-card__overlay" href="blogs/pcie-introduction.html"
+                    aria-label="Read PCIe Introduction"></a>
+                <div class="post-card__icon-wrap">
+                    <svg class="post-card__icon" viewBox="0 0 64 64" fill="none"
+                        xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                        <rect x="10" y="10" width="44" height="44" rx="6" stroke="#0071e3" stroke-width="2.5"
+                            fill="none" />
+                        <rect x="18" y="18" width="28" height="28" rx="3" fill="#0071e3" fill-opacity="0.15"
+                            stroke="#0071e3" stroke-width="1.5" />
+                        <line x1="20" y1="10" x2="20" y2="4" stroke="#6e6e73" stroke-width="2" stroke-linecap="round" />
+                        <line x1="32" y1="10" x2="32" y2="4" stroke="#6e6e73" stroke-width="2" stroke-linecap="round" />
+                        <line x1="44" y1="10" x2="44" y2="4" stroke="#6e6e73" stroke-width="2" stroke-linecap="round" />
+                        <line x1="20" y1="54" x2="20" y2="60" stroke="#6e6e73" stroke-width="2" stroke-linecap="round" />
+                        <line x1="32" y1="54" x2="32" y2="60" stroke="#6e6e73" stroke-width="2" stroke-linecap="round" />
+                        <line x1="44" y1="54" x2="44" y2="60" stroke="#6e6e73" stroke-width="2" stroke-linecap="round" />
+                        <line x1="10" y1="20" x2="4" y2="20" stroke="#6e6e73" stroke-width="2" stroke-linecap="round" />
+                        <line x1="10" y1="32" x2="4" y2="32" stroke="#6e6e73" stroke-width="2" stroke-linecap="round" />
+                        <line x1="10" y1="44" x2="4" y2="44" stroke="#6e6e73" stroke-width="2" stroke-linecap="round" />
+                        <line x1="54" y1="20" x2="60" y2="20" stroke="#6e6e73" stroke-width="2" stroke-linecap="round" />
+                        <line x1="54" y1="32" x2="60" y2="32" stroke="#6e6e73" stroke-width="2" stroke-linecap="round" />
+                        <line x1="54" y1="44" x2="60" y2="44" stroke="#6e6e73" stroke-width="2" stroke-linecap="round" />
+                        <text x="32" y="35" text-anchor="middle" font-family="Inter, sans-serif" font-size="8"
+                            font-weight="700" fill="#0071e3">PCIe</text>
+                    </svg>
+                </div>
+                <div class="post-card__body">
+                    <span class="post-card__tag">PCIe · Fundamentals</span>
+                    <h3 class="post-card__title">Getting Started with PCIe</h3>
+                    <p class="post-card__excerpt">
+                        A practical beginner's guide to PCI Express: topology, lanes, link training,
+                        configuration space, ECAM, BARs, and TLP packet structure.
+                    </p>
+                    <div class="post-card__meta">
+                        <span class="post-card__date">March 22, 2026</span>
+                        <span class="post-card__link" aria-hidden="true">
+                            Read
+                            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="none"
+                                viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+                            </svg>
+                        </span>
+                    </div>
+                </div>
+            </article>
+
+            <!-- Add more blog cards here following the same pattern -->
+
+        </div>
+    </section>
+
+    <!-- ===================================================
+         Case Studies
+    =================================================== -->
+    <section class="section" id="case-studies">
+        <div class="section__head fade-in">
+            <p class="section__label">Real-World Problem Solving</p>
+            <h2 class="section__title">Case Studies</h2>
+            <p class="section__desc">Hands-on teardowns of actual hardware and driver debugging sessions.</p>
+        </div>
+
+        <div class="card-grid">
+            <!-- Empty state — add case studies here -->
+            <div class="empty fade-in">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
+                    stroke="currentColor" stroke-width="1.5">
+                    <path stroke-linecap="round" stroke-linejoin="round"
+                        d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                </svg>
+                Case studies coming soon. Add <code>.adoc</code> files with <code>:type: case-study</code> to
+                <code>_posts/</code> and run <code>./scripts/build.sh</code>.
+            </div>
+        </div>
+    </section>
+
+    <!-- ===================================================
+         Projects
+    =================================================== -->
+    <section class="section" id="projects">
+        <div class="section__head fade-in">
+            <p class="section__label">Open Source</p>
+            <h2 class="section__title">Projects</h2>
+            <p class="section__desc">A selection of open-source projects and experiments on GitHub.</p>
+        </div>
+
+        <div class="card-grid">
+
+            <!-- Yocto Playground -->
+            <article class="proj-card fade-in">
+                <a class="proj-card__overlay"
+                    href="https://github.com/Abhishekojha38/yocto-playground"
+                    target="_blank" rel="noopener noreferrer"
+                    aria-label="Yocto Playground on GitHub"></a>
+                <div class="proj-card__top">
+                    <div class="proj-card__icon">
+                        <!-- Terminal icon -->
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
+                            stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round"
+                                d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
+                    </div>
+                    <span class="proj-card__gh">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 21.795 24 17.295 24 12c0-6.63-5.37-12-12-12"/>
+                        </svg>
+                        GitHub
+                    </span>
+                </div>
+                <h3 class="proj-card__name">yocto-playground</h3>
+                <p class="proj-card__desc">
+                    A Yocto Project-based playground for building custom embedded Linux images,
+                    exploring PCIe topology with QEMU, and testing custom device drivers.
+                </p>
+                <div class="proj-card__langs">
+                    <span class="lang-badge lang-badge--shell">Shell</span>
+                    <span class="lang-badge lang-badge--c">C</span>
+                    <span class="lang-badge">BitBake</span>
+                </div>
+            </article>
+
+            <!-- QEMU PCIe -->
+            <article class="proj-card fade-in">
+                <a class="proj-card__overlay"
+                    href="https://github.com/Abhishekojha38/qemu-pcie"
+                    target="_blank" rel="noopener noreferrer"
+                    aria-label="QEMU PCIe on GitHub"></a>
+                <div class="proj-card__top">
+                    <div class="proj-card__icon" style="background: #6e3fa3;">
+                        <!-- Chip icon -->
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
+                            stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round"
+                                d="M9 3H7a2 2 0 00-2 2v2M9 3h6M9 3V1m6 2h2a2 2 0 012 2v2m0 0V3m0 4v10m0 0h2m-2 0a2 2 0 01-2 2H7a2 2 0 01-2-2m0 0H3m4 0v2M7 7H5M7 7h10M7 7v10" />
+                        </svg>
+                    </div>
+                    <span class="proj-card__gh">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 21.795 24 17.295 24 12c0-6.63-5.37-12-12-12"/>
+                        </svg>
+                        GitHub
+                    </span>
+                </div>
+                <h3 class="proj-card__name">qemu-pcie</h3>
+                <p class="proj-card__desc">
+                    A minimal PCIe NIC device implementation for QEMU used to demonstrate PCIe device
+                    enumeration, BAR mapping, and driver interaction.
+                </p>
+                <div class="proj-card__langs">
+                    <span class="lang-badge lang-badge--c">C</span>
+                    <span class="lang-badge lang-badge--py">Python</span>
+                </div>
+            </article>
+
+            <!-- Add more project cards here -->
+
+        </div>
+    </section>
+
+    <!-- ===================================================
+         Footer
+    =================================================== -->
+    <footer class="footer">
+        <div class="footer__inner">
+            <p class="footer__name">Abhishek Ojha</p>
+            <p class="footer__copy">
+                Last updated March 2026 &nbsp;·&nbsp;
+                Embedded Linux &amp; Board Bring‑Up &nbsp;·&nbsp;
+                Built with <code>asciidoctor</code>
+            </p>
+        </div>
+    </footer>
+
+    <!-- Scroll fade-in -->
+    <script>
+        const io = new IntersectionObserver((entries) => {
+            entries.forEach((el, i) => {
+                if (el.isIntersecting) {
+                    el.target.style.transitionDelay = (i * 0.07) + 's';
+                    el.target.classList.add('visible');
+                    io.unobserve(el.target);
+                }
+            });
+        }, { threshold: 0.08 });
+
+        document.querySelectorAll('.fade-in').forEach(el => io.observe(el));
+    </script>
+
+</body>
+</html>

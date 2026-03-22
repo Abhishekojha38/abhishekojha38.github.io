@@ -1,0 +1,5 @@
+title: Abhishek Ojha's Blog
+description: Embedded Linux, Board Bring-Up, Driver Debugging
+
+# No Jekyll processing — we build HTML ourselves with scripts/build.sh
+# .nojekyll in repo root disables Jekyll on GitHub Pages

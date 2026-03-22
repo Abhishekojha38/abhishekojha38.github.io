@@ -1,0 +1,584 @@
+/*
+ * apple-theme.css
+ * Apple.com-inspired theme for Asciidoctor-generated HTML documents.
+ * Applied via: asciidoctor -a stylesheet=apple-theme.css -a stylesdir=../assets
+ */
+
+/* ============================================================
+   Google Fonts (Inter — SF Pro substitute)
+============================================================ */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+/* ============================================================
+   Design Tokens
+============================================================ */
+:root {
+    --bg:          #ffffff;
+    --surface:     #f5f5f7;
+    --surface2:    #e8e8ed;
+    --border:      #d2d2d7;
+    --text:        #1d1d1f;
+    --text2:       #6e6e73;
+    --text3:       #a1a1a6;
+    --accent:      #0071e3;
+    --accent-h:    #0077ed;
+    --accent-dark: #003c82;
+    --danger:      #ff3b30;
+    --warn:        #ff9f0a;
+    --ok:          #30d158;
+    --info:        #0071e3;
+    --code-bg:     #f5f5f7;
+    --code-border: #d2d2d7;
+    --toc-w:       260px;
+    --max-w:       880px;
+    --r:           10px;
+    --nav-h:       52px;
+}
+
+/* ============================================================
+   Reset / Base
+============================================================ */
+*,
+*::before,
+*::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
+    font-size: 17px;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    scroll-behavior: smooth;
+    background: var(--bg);
+    color: var(--text);
+}
+
+body {
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    word-wrap: break-word;
+}
+
+a {
+    color: var(--accent);
+    text-decoration: none;
+    transition: color .2s;
+}
+a:hover { color: var(--accent-h); }
+
+img, video, object, embed, svg {
+    max-width: 100%;
+    height: auto;
+    display: block;
+}
+
+/* ============================================================
+   Back-to-home nav bar (injected via docinfo)
+   Note: .apple-nav is added by build.sh docinfo header
+============================================================ */
+.apple-nav {
+    position: sticky;
+    top: 0;
+    z-index: 9999;
+    height: var(--nav-h);
+    background: rgba(255,255,255,0.85);
+    backdrop-filter: saturate(180%) blur(20px);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    border-bottom: 1px solid rgba(0,0,0,0.08);
+    display: flex;
+    align-items: center;
+    padding: 0 24px;
+    gap: 16px;
+}
+.apple-nav a {
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: var(--text2);
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    transition: color .2s;
+}
+.apple-nav a:hover { color: var(--accent); }
+.apple-nav .sep {
+    font-size: 0.78rem;
+    color: var(--text3);
+}
+.apple-nav .current {
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: var(--text);
+}
+
+/* ============================================================
+   TOC sidebar
+============================================================ */
+body.toc2 {
+    padding-left: var(--toc-w);
+    padding-right: 0;
+}
+
+#toc.toc2 {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: var(--toc-w);
+    height: 100%;
+    overflow-y: auto;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    padding: 68px 20px 28px;
+    z-index: 100;
+    scrollbar-width: thin;
+}
+
+#toctitle {
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--text3);
+    margin-bottom: 14px;
+}
+
+#toc ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+#toc ul.sectlevel1 > li {
+    margin-bottom: 2px;
+}
+
+#toc ul.sectlevel1 > li > a {
+    display: block;
+    padding: 5px 8px;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--text2);
+    transition: background .15s, color .15s;
+}
+#toc ul.sectlevel1 > li > a:hover {
+    background: var(--surface2);
+    color: var(--text);
+}
+
+#toc ul.sectlevel2 {
+    margin-left: 12px;
+    margin-bottom: 4px;
+}
+#toc ul.sectlevel2 > li > a {
+    display: block;
+    padding: 3px 8px;
+    border-radius: 5px;
+    font-size: 0.74rem;
+    font-weight: 400;
+    color: var(--text3);
+    transition: background .15s, color .15s;
+}
+#toc ul.sectlevel2 > li > a:hover {
+    background: var(--surface2);
+    color: var(--text2);
+}
+
+#toc ul.sectlevel3 {
+    margin-left: 12px;
+}
+#toc ul.sectlevel3 > li > a {
+    display: block;
+    padding: 2px 8px;
+    font-size: 0.7rem;
+    font-weight: 400;
+    color: var(--text3);
+    transition: color .15s;
+}
+#toc ul.sectlevel3 > li > a:hover { color: var(--text2); }
+
+/* ============================================================
+   Header
+============================================================ */
+#header {
+    max-width: var(--max-w);
+    margin: 48px auto 0;
+    padding: 0 28px 28px;
+    border-bottom: 1px solid var(--border);
+}
+
+#header h1 {
+    font-size: clamp(1.8rem, 4vw, 2.8rem);
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1.1;
+    color: var(--text);
+    margin: 0 0 10px;
+}
+
+#header .details {
+    font-size: 0.8rem;
+    color: var(--text2);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    padding-top: 8px;
+}
+#header .details span::before { display: none; }
+#header .details br+span::before { content: none; }
+
+/* ============================================================
+   Content
+============================================================ */
+#content {
+    max-width: var(--max-w);
+    margin: 0 auto;
+    padding: 36px 28px 64px;
+}
+
+/* ============================================================
+   Headings
+============================================================ */
+h1, h2, h3, h4, h5, h6,
+#toctitle,
+.sidebarblock > .content > .title {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+    color: var(--text);
+    margin-top: 1.8em;
+    margin-bottom: 0.5em;
+}
+
+h2 { font-size: 1.65rem; padding-bottom: 0.3em; border-bottom: 1px solid var(--border); margin-top: 2.2em; }
+h3 { font-size: 1.25rem; }
+h4 { font-size: 1.05rem; }
+h5 { font-size: 0.95rem; }
+h6 { font-size: 0.88rem; color: var(--text2); }
+
+/* Anchor links */
+h1 > a.link, h2 > a.link, h3 > a.link,
+h4 > a.link, h5 > a.link, h6 > a.link {
+    color: inherit;
+    text-decoration: none;
+}
+h2 > a.anchor, h3 > a.anchor,
+h4 > a.anchor, h5 > a.anchor {
+    visibility: hidden;
+    margin-left: -1.2em;
+    padding-right: 0.4em;
+    font-size: 0.7em;
+    color: var(--text3);
+}
+h2:hover > a.anchor,
+h3:hover > a.anchor,
+h4:hover > a.anchor { visibility: visible; }
+
+/* ============================================================
+   Paragraphs & lists
+============================================================ */
+#content p {
+    line-height: 1.75;
+    margin-bottom: 1.1em;
+    font-size: 1rem;
+    color: var(--text);
+}
+
+#content ul,
+#content ol {
+    margin: 0 0 1.1em 1.4em;
+    line-height: 1.75;
+}
+#content li { margin-bottom: 0.3em; }
+
+#content dl dt {
+    font-weight: 600;
+    margin-top: 0.75em;
+}
+#content dl dd {
+    margin-left: 1.2em;
+    margin-bottom: 0.5em;
+    color: var(--text2);
+}
+
+/* ============================================================
+   Code & Pre
+============================================================ */
+code {
+    font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', 'Droid Sans Mono', monospace;
+    font-size: 0.87em;
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    border-radius: 5px;
+    padding: 0.1em 0.45em;
+    color: var(--text);
+}
+
+.listingblock > .content > pre,
+.literalblock pre {
+    background: #1c1c1e;
+    border: none;
+    border-radius: var(--r);
+    padding: 20px 22px;
+    overflow-x: auto;
+    line-height: 1.6;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.12);
+}
+
+.listingblock > .content > pre code,
+.literalblock pre code {
+    font-family: 'JetBrains Mono', 'SF Mono', monospace;
+    font-size: 0.82rem;
+    background: none;
+    border: none;
+    padding: 0;
+    color: #e2e8f0;
+}
+
+/* Language label */
+.listingblock code[data-lang]::before {
+    display: none;
+    content: attr(data-lang);
+    position: absolute;
+    top: 0.5rem;
+    right: 0.75rem;
+    font-size: 0.65rem;
+    font-family: 'Inter', sans-serif;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: rgba(255,255,255,0.35);
+    font-weight: 600;
+}
+.listingblock:hover code[data-lang]::before { display: block; }
+.listingblock > .content { position: relative; }
+
+/* ============================================================
+   Listing block title
+============================================================ */
+.listingblock > .title,
+.literalblock > .title,
+.imageblock > .title,
+.exampleblock > .title {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text2);
+    letter-spacing: .03em;
+    margin-bottom: 6px;
+}
+
+/* ============================================================
+   Tables
+============================================================ */
+table.tableblock {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1.5em 0;
+    font-size: 0.88rem;
+    border-radius: var(--r);
+    overflow: hidden;
+    border: 1px solid var(--border);
+    box-shadow: 0 1px 6px rgba(0,0,0,0.04);
+}
+
+table.tableblock thead {
+    background: var(--surface);
+}
+
+table.tableblock thead tr th {
+    padding: 10px 16px;
+    font-weight: 600;
+    font-size: 0.78rem;
+    letter-spacing: .03em;
+    text-transform: uppercase;
+    color: var(--text2);
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+}
+
+table.tableblock tbody tr td {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    vertical-align: top;
+    line-height: 1.6;
+}
+
+table.tableblock tbody tr:last-child td { border-bottom: none; }
+table.tableblock tbody tr:nth-child(even) { background: var(--surface); }
+
+/* ============================================================
+   Admonition blocks
+============================================================ */
+.admonitionblock {
+    margin: 1.5em 0;
+    border-radius: var(--r);
+    overflow: hidden;
+    border-left: 4px solid;
+}
+.admonitionblock.note   { border-color: var(--info);   background: rgba(0,113,227,.06); }
+.admonitionblock.tip    { border-color: var(--ok);     background: rgba(48,209,88,.06); }
+.admonitionblock.warning { border-color: var(--warn);  background: rgba(255,159,10,.06); }
+.admonitionblock.important { border-color: var(--danger); background: rgba(255,59,48,.06); }
+.admonitionblock.caution { border-color: var(--warn);  background: rgba(255,159,10,.06); }
+
+.admonitionblock > table {
+    border: none;
+    background: none;
+    width: 100%;
+    box-shadow: none;
+}
+.admonitionblock > table td.icon {
+    width: 60px;
+    padding: 14px 12px 14px 16px;
+    vertical-align: top;
+    text-align: center;
+}
+.admonitionblock > table td.icon .title {
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+}
+.admonitionblock.note   td.icon .title { color: var(--info); }
+.admonitionblock.tip    td.icon .title { color: var(--ok); }
+.admonitionblock.warning td.icon .title { color: var(--warn); }
+.admonitionblock.important td.icon .title { color: var(--danger); }
+.admonitionblock.caution td.icon .title { color: var(--warn); }
+
+.admonitionblock > table td.content {
+    padding: 14px 16px;
+    border-left: none;
+    font-size: 0.9rem;
+    color: var(--text);
+    line-height: 1.65;
+}
+
+/* ============================================================
+   Blockquote
+============================================================ */
+.quoteblock {
+    background: var(--surface);
+    border-left: 4px solid var(--border);
+    border-radius: 0 var(--r) var(--r) 0;
+    margin: 1.5em 0;
+    padding: 16px 20px;
+}
+.quoteblock blockquote::before { display: none; }
+.quoteblock blockquote,
+.quoteblock p {
+    font-size: 1rem;
+    color: var(--text2);
+    font-style: italic;
+    line-height: 1.7;
+    word-spacing: 0;
+}
+.quoteblock .attribution {
+    font-size: 0.8rem;
+    color: var(--text3);
+    text-align: right;
+    margin-top: 10px;
+}
+
+/* ============================================================
+   Sidebar block
+============================================================ */
+.sidebarblock {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    padding: 20px 22px;
+    margin: 1.5em 0;
+}
+.sidebarblock > .content > .title {
+    font-size: 0.9rem;
+    color: var(--text2);
+    text-align: left;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+}
+
+/* ============================================================
+   Example block
+============================================================ */
+.exampleblock > .content {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    padding: 18px 20px;
+    margin: 1.2em 0;
+}
+
+/* ============================================================
+   Horizontal rule & Sect dividers
+============================================================ */
+hr,
+.sect1 + .sect1 { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+
+/* ============================================================
+   kbd / button
+============================================================ */
+kbd {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75em;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    box-shadow: 0 1px 0 var(--border);
+    padding: 0.15em 0.45em;
+    color: var(--text);
+}
+
+/* ============================================================
+   Footer
+============================================================ */
+#footer {
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    padding: 28px;
+    text-align: center;
+    max-width: none;
+}
+#footer-text {
+    font-size: 0.74rem;
+    color: var(--text3);
+    line-height: 1.5;
+}
+
+/* ============================================================
+   Utility overrides
+============================================================ */
+.hide { display: none; }
+.text-left  { text-align: left !important; }
+.text-right { text-align: right !important; }
+.text-center { text-align: center !important; }
+
+/* ============================================================
+   Responsive — collapse TOC on small screens
+============================================================ */
+@media (max-width: 860px) {
+    body.toc2 { padding-left: 0; }
+    #toc.toc2 {
+        position: relative;
+        width: 100%;
+        height: auto;
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+        padding: 16px 20px;
+    }
+}
+
+@media (max-width: 600px) {
+    #content   { padding: 24px 16px 48px; }
+    #header    { padding: 0 16px 20px; }
+}
+
+/* ============================================================
+   Print
+============================================================ */
+@media print {
+    body.toc2 { padding-left: 0; }
+    #toc.toc2 { display: none; }
+    .apple-nav { display: none; }
+    #footer { background: none; }
+}
