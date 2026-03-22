@@ -1,0 +1,1813 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="generator" content="Asciidoctor 2.0.26">
+<title>ARM32 Kernel Startup: From stext to start_kernel()</title>
+<link rel="stylesheet" href="../assets/apple-theme.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+<link rel="stylesheet" href="../assets/rouge-base16.dark.css">
+</head>
+<nav class="apple-nav"><a href="../index.html"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>Home</a><span class="sep">›</span><span class="current">Part2: ARM-kernel-startup</span></nav>
+<body class="article toc2 toc-left">
+<div id="header">
+<h1>ARM32 Kernel Startup: From stext to start_kernel()</h1>
+<div id="toc" class="toc2">
+<div id="toctitle">Table of Contents</div>
+<ul class="sectlevel1">
+<li><a href="#_handoff_point_where_we_came_from">1. Handoff Point — Where We Came From</a></li>
+<li><a href="#_the_complete_startup_flow">2. The Complete Startup Flow</a></li>
+<li><a href="#_virtual_memory_split_where_will_the_kernel_live">3. Virtual Memory Split — Where Will the Kernel Live?</a>
+<ul class="sectlevel2">
+<li><a href="#_page_offset_the_kerneluser_split">3.1. PAGE_OFFSET — The Kernel/User Split</a></li>
+<li><a href="#_kernel_ram_vaddr_where_stext_is_linked">3.2. KERNEL_RAM_VADDR — Where stext Is Linked</a></li>
+</ul>
+</li>
+<li><a href="#_phase_1_stext_cpu_and_feature_detection">4. Phase 1: stext — CPU and Feature Detection</a>
+<ul class="sectlevel2">
+<li><a href="#_entry_conditions_check">4.1. Entry Conditions Check</a></li>
+<li><a href="#_lookup_processor_type">4.2. __lookup_processor_type</a></li>
+<li><a href="#_lookup_machine_type_non_dt_boot_verify_dtb_dt_boot">4.3. __lookup_machine_type (non-DT boot) / Verify DTB (DT boot)</a></li>
+</ul>
+</li>
+<li><a href="#_phase_2_calculating_phys_offset_and_p2v_patching">5. Phase 2: Calculating PHYS_OFFSET and P2V Patching</a>
+<ul class="sectlevel2">
+<li><a href="#_the_problem">5.1. The Problem</a></li>
+<li><a href="#_the_solution_runtime_delta_calculation">5.2. The Solution — Runtime Delta Calculation</a></li>
+<li><a href="#_config_arm_patch_phys_virt_patching_every_p2v_conversion">5.3. CONFIG_ARM_PATCH_PHYS_VIRT — Patching Every P2V Conversion</a></li>
+</ul>
+</li>
+<li><a href="#_phase_3_create_page_tables_building_the_initial_mmu_mappings">6. Phase 3: __create_page_tables — Building the Initial MMU Mappings</a>
+<ul class="sectlevel2">
+<li><a href="#_swapper_pg_dir_the_initial_page_table_location">6.1. swapper_pg_dir — The Initial Page Table Location</a></li>
+<li><a href="#_step_1_zero_the_entire_page_table">6.2. Step 1: Zero the Entire Page Table</a></li>
+<li><a href="#_arm32_page_table_format_section_descriptors">6.3. ARM32 Page Table Format — Section Descriptors</a></li>
+<li><a href="#_step_2_map_kernel_sections_virtual_physical">6.4. Step 2: Map Kernel Sections (Virtual → Physical)</a></li>
+<li><a href="#_step_3_map_identity_sections_physical_virtual">6.5. Step 3: Map Identity Sections (Physical = Virtual)</a></li>
+<li><a href="#_step_4_map_the_dtb">6.6. Step 4: Map the DTB</a></li>
+<li><a href="#_the_two_key_mappings">6.7. The Two Key Mappings</a></li>
+<li><a href="#_linux_page_table_terminology_arm32">6.8. Linux Page Table Terminology (ARM32)</a></li>
+</ul>
+</li>
+<li><a href="#_phase_4_cpu_specific_setup_proc_v7_s">7. Phase 4: CPU-Specific Setup — proc-v7.S</a></li>
+<li><a href="#_phase_5_enable_mmu_turning_on_the_mmu">8. Phase 5: __enable_mmu — Turning On the MMU</a>
+<ul class="sectlevel2">
+<li><a href="#_the_complete_enable_mmu_sequence">8.1. The Complete __enable_mmu Sequence</a></li>
+<li><a href="#_cp15_registers_written">8.2. CP15 Registers Written</a></li>
+<li><a href="#_why_the_3_nops_are_critical_the_identity_mapping_bridge">8.3. Why the 3 NOPs Are Critical — The Identity Mapping Bridge</a></li>
+</ul>
+</li>
+<li><a href="#_phase_6_mmap_switched_final_c_runtime_and_start_kernel">9. Phase 6: __mmap_switched — Final C Runtime and start_kernel()</a>
+<ul class="sectlevel2">
+<li><a href="#_data_table_mmap_switched_data">9.1. Data Table __mmap_switched_data</a></li>
+</ul>
+</li>
+<li><a href="#_virtual_memory_layout_after_mmu_on">10. Virtual Memory Layout After MMU On</a>
+<ul class="sectlevel2">
+<li><a href="#_physical_virtual_translation_after_boot">10.1. Physical ↔ Virtual Translation After Boot</a></li>
+</ul>
+</li>
+<li><a href="#_what_happens_in_start_kernel">11. What Happens in start_kernel()</a></li>
+<li><a href="#_debugging_the_kernel_startup_with_gdb">12. Debugging the Kernel Startup with GDB</a>
+<ul class="sectlevel2">
+<li><a href="#_loading_vmlinux_symbols">12.1. Loading vmlinux Symbols</a></li>
+<li><a href="#_key_breakpoints_for_head_s_tracing">12.2. Key Breakpoints for head.S Tracing</a></li>
+<li><a href="#_inspecting_the_page_table">12.3. Inspecting the Page Table</a></li>
+<li><a href="#_vmlinux_disassembly">12.4. vmlinux Disassembly</a></li>
+<li><a href="#_vmlinux_section_headers">12.5. vmlinux Section Headers</a></li>
+</ul>
+</li>
+<li><a href="#_summary_key_addresses_and_symbols">13. Summary: Key Addresses and Symbols</a></li>
+</ul>
+</div>
+</div>
+<div id="content">
+<div id="preamble">
+<div class="sectionbody">
+<div class="paragraph lead">
+<p>This document continues directly from the previous guide on zImage decompression.
+At that point, <code>__enter_kernel</code> in the compressed <code>head.S</code> transferred control
+to <code>stext</code> — the very first instruction of <code>arch/arm/kernel/head.S</code> in the
+uncompressed <code>vmlinux</code>.</p>
+</div>
+<div class="paragraph">
+<p>This document covers everything that happens from that moment — CPU running
+at physical <code>0x40208000</code>, MMU completely off — all the way to the first line
+of C code in <code>start_kernel()</code> in <code>init/main.c</code>.</p>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p><strong>Prerequisite</strong>: <a href="Debugging-linux-boot-process.adoc">Debugging Linux Boot
+Process</a> — the companion document covering the zImage build pipeline and
+self-decompression stage.</p>
+</div>
+<div class="paragraph">
+<p><strong>Reference</strong>: <a href="https://people.kernel.org/linusw/how-the-arm32-kernel-starts">How the
+ARM32 kernel starts</a> — Linus Walleij&#8217;s in-depth article that this document
+draws from and expands.</p>
+</div>
+<div class="paragraph">
+<p><strong>Source</strong>: <code>arch/arm/kernel/head.S</code> and <code>arch/arm/kernel/head-common.S</code></p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<hr>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_handoff_point_where_we_came_from"><a class="anchor" href="#_handoff_point_where_we_came_from"></a>1. Handoff Point — Where We Came From</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>The previous document ended with <code>__enter_kernel</code> in the <strong>compressed</strong> bootstrap
+loader (<code>arch/arm/boot/compressed/head.S</code>) executing:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm"><span class="nl">__enter_kernel</span><span class="err">:</span>
+    <span class="nb">mov</span>     <span class="nv">r0</span><span class="o">,</span> <span class="o">#</span><span class="mi">0</span>          <span class="no">@</span> <span class="nv">r0</span> <span class="nv">must</span> <span class="nv">be</span> <span class="mi">0</span>
+    <span class="nb">mov</span>     <span class="nv">r1</span><span class="o">,</span> <span class="nv">r7</span>          <span class="no">@</span> <span class="nv">restore</span> <span class="nv">MachID</span> <span class="nv">saved</span> <span class="nv">at</span> <span class="nv">zImage</span> <span class="nv">entry</span>
+    <span class="nb">mov</span>     <span class="nv">r2</span><span class="o">,</span> <span class="nv">r8</span>          <span class="no">@</span> <span class="nv">restore</span> <span class="nv">DTB</span> <span class="nv">pointer</span> <span class="nv">saved</span> <span class="nv">at</span> <span class="nv">zImage</span> <span class="nv">entry</span>
+    <span class="nb">mov</span>     <span class="nv">pc</span><span class="o">,</span> <span class="nv">r4</span>          <span class="no">@</span> <span class="nv">jump</span> <span class="nv">to</span> <span class="nv">stext</span> <span class="nv">at</span> <span class="nv">ZRELADDR</span> <span class="o">=</span> <span class="mh">0x40208000</span></code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>At the instant <code>pc = 0x40208000</code>, the CPU state is:</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 14.2857%;">
+<col style="width: 28.5714%;">
+<col style="width: 57.1429%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Register</th>
+<th class="tableblock halign-left valign-top">Value</th>
+<th class="tableblock halign-left valign-top">Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r0</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x00000000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">ARM boot ABI — must be zero</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r1</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0xFFFFFFFF</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Machine type ID (ignored by device-tree kernels)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r2</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x48000000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Physical address of Device Tree Blob (DTB)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>pc</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40208000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>stext</code> — first instruction in <code>arch/arm/kernel/head.S</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">MMU</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">OFF</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">No virtual memory — every address is physical</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Caches</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">OFF</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">I-cache and D-cache disabled</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">CPSR</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">SVC mode</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">IRQ and FIQ masked</p></td>
+</tr>
+</tbody>
+</table>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/ks-stext-entry.png" alt="stext entry" width="700">
+</div>
+<div class="title">Figure 1. Physical RAM state at stext entry and register ABI</div>
+</div>
+<div class="paragraph">
+<p>The key difference between this <code>head.S</code> and the compressed <code>head.S</code> is that
+this code was <strong>linked</strong> to execute at a virtual address (typically <code>0xC0208000</code>)
+but is <strong>physically</strong> executing at <code>0x40208000</code>.  The earliest code must therefore
+be written as position-independent assembly — it cannot use any linked address
+until it has set up the MMU.</p>
+</div>
+<hr>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_the_complete_startup_flow"><a class="anchor" href="#_the_complete_startup_flow"></a>2. The Complete Startup Flow</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Before diving into each phase, here is the complete sequence from <code>stext</code> to
+<code>start_kernel()</code>:</p>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/ks-startup-overview.png" alt="Startup overview" width="740">
+</div>
+<div class="title">Figure 2. Complete ARM32 kernel startup flow from stext to start_kernel()</div>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 16.6666%;">
+<col style="width: 33.3333%;">
+<col style="width: 50.0001%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Phase</th>
+<th class="tableblock halign-left valign-top">Symbol</th>
+<th class="tableblock halign-left valign-top">Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>stext</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Entry point, initial register setup</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">2</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>__lookup_processor_type</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Identify CPU, find <code>proc_info</code> structure</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">3</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>__fixup_pv_table</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Calculate <code>PHYS_OFFSET</code>, patch P2V conversions</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">4</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>__create_page_tables</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Build initial section mappings in <code>swapper_pg_dir</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">5</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>__v7_setup</code> (proc-v7.S)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">CPU-specific cache/TLB setup, prepare SCTLR</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">6</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code><em>enable_mmu</code> / <code></em>turn_mmu_on</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Activate MMU, flush pipeline</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">7</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>__mmap_switched</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Stack setup, BSS clear, branch to C</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">8</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>start_kernel()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">First fully C kernel code</p></td>
+</tr>
+</tbody>
+</table>
+<hr>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_virtual_memory_split_where_will_the_kernel_live"><a class="anchor" href="#_virtual_memory_split_where_will_the_kernel_live"></a>3. Virtual Memory Split — Where Will the Kernel Live?</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Before examining the assembly, we must understand the virtual address space
+layout that governs every decision in <code>head.S</code>.</p>
+</div>
+<div class="sect2">
+<h3 id="_page_offset_the_kerneluser_split"><a class="anchor" href="#_page_offset_the_kerneluser_split"></a>3.1. PAGE_OFFSET — The Kernel/User Split</h3>
+<div class="paragraph">
+<p>The kernel and userspace share the same 32-bit virtual address space.
+<code>PAGE_OFFSET</code> defines the boundary:</p>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/ks-virt-phys-split.png" alt="Virtual physical split" width="700">
+</div>
+<div class="title">Figure 3. ARM32 virtual memory split options and typical use cases</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="kconfig">config PAGE_OFFSET
+    hex
+    default 0x40000000 if VMSPLIT_1G   # kernel-heavy (routers, NAS)
+    default 0x80000000 if VMSPLIT_2G   # balanced split
+    default 0xB0000000 if VMSPLIT_3G_OPT
+    default 0xC0000000                  # default — user-heavy (phones, tablets)</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The overwhelming majority of ARM Linux systems use <code>PAGE_OFFSET = 0xC0000000</code>,
+giving:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><strong>Userspace</strong>: <code>0x00000000</code> – <code>0xBFFFFFFF</code> (3 GiB) — per-process virtual memory</p>
+</li>
+<li>
+<p><strong>Kernel space</strong>: <code>0xC0000000</code> – <code>0xFFFFFFFF</code> (1 GiB) — always-mapped kernel memory</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>The kernel is <strong>always mapped</strong> in every process&#8217;s page table.  When a userspace
+process makes a system call, the CPU simply switches privilege level — no page
+table swap is needed because the kernel was already present in the upper 1 GiB.
+This makes kernel entry extremely fast.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_kernel_ram_vaddr_where_stext_is_linked"><a class="anchor" href="#_kernel_ram_vaddr_where_stext_is_linked"></a>3.2. KERNEL_RAM_VADDR — Where stext Is Linked</h3>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code>KERNEL_RAM_VADDR = PAGE_OFFSET + TEXT_OFFSET
+                 = 0xC0000000  + 0x208000
+                 = 0xC0208000    ← virtual address to which the kernel is linked</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The kernel binary was compiled and linked assuming it will execute at
+<code>0xC0208000</code>.  But right now, with the MMU off, it is physically at <code>0x40208000</code>.
+This is the fundamental tension that the early startup code must resolve.</p>
+</div>
+<hr>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_phase_1_stext_cpu_and_feature_detection"><a class="anchor" href="#_phase_1_stext_cpu_and_feature_detection"></a>4. Phase 1: stext — CPU and Feature Detection</h2>
+<div class="sectionbody">
+<div class="sect2">
+<h3 id="_entry_conditions_check"><a class="anchor" href="#_entry_conditions_check"></a>4.1. Entry Conditions Check</h3>
+<div class="paragraph">
+<p><code>head.S</code> begins with checks for two advanced features:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm"><span class="nl">ENTRY</span><span class="err">(</span><span class="nl">stext</span><span class="err">)</span>
+ <span class="nb">THUMB</span><span class="err">(</span>  <span class="nv">adr</span>   <span class="nv">r9</span><span class="o">,</span> <span class="nv">BSYM</span><span class="o">(</span><span class="mi">1</span><span class="nv">f</span><span class="o">)</span>   <span class="o">)</span>   <span class="no">@</span> <span class="nv">Thumb</span><span class="o">-</span><span class="mi">2</span> <span class="nv">interworking</span>
+ <span class="nb">ARM</span><span class="err">(</span>    <span class="nv">mov</span>   <span class="nv">r9</span><span class="o">,</span> <span class="nv">r9</span>          <span class="o">)</span>   <span class="no">@</span> <span class="nv">no</span><span class="o">-</span><span class="nv">op</span> <span class="nv">in</span> <span class="nv">ARM</span> <span class="nv">mode</span>
+        <span class="nb">mrc</span>   <span class="nv">p15</span><span class="o">,</span> <span class="mi">0</span><span class="o">,</span> <span class="nv">r9</span><span class="o">,</span> <span class="nv">c0</span><span class="o">,</span> <span class="nv">c0</span>  <span class="no">@</span> <span class="nv">get</span> <span class="nv">processor</span> <span class="nv">ID</span> <span class="o">(</span><span class="nv">CPUID</span><span class="o">)</span>
+        <span class="nb">bl</span>    <span class="nv">__lookup_processor_type</span>  <span class="no">@</span> <span class="nv">find</span> <span class="nv">proc_info</span> <span class="nv">in</span> <span class="nv">proc</span><span class="o">-</span><span class="nv">v7</span><span class="mf">.</span><span class="nv">S</span> <span class="nv">etc</span><span class="mf">.</span>
+        <span class="nb">movs</span>  <span class="nv">r10</span><span class="o">,</span> <span class="nv">r5</span>              <span class="no">@</span> <span class="nv">r10</span> <span class="o">=</span> <span class="nv">proc_info</span> <span class="nv">ptr</span> <span class="o">(</span><span class="mi">0</span> <span class="o">=</span> <span class="nv">not</span> <span class="nv">found</span><span class="o">)</span>
+        <span class="nb">beq</span>   <span class="nv">__error_p</span>            <span class="no">@</span> <span class="nv">BUG</span> <span class="nv">if</span> <span class="nv">processor</span> <span class="nv">not</span> <span class="nv">supported</span><span class="o">!</span></code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_lookup_processor_type"><a class="anchor" href="#_lookup_processor_type"></a>4.2. __lookup_processor_type</h3>
+<div class="paragraph">
+<p>This function reads the CPU ID register (<code>CP15 c0</code>) and walks the <code>proc_info_list</code>
+table embedded in the kernel to find the correct processor descriptor:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm"><span class="nl">__lookup_processor_type</span><span class="err">:</span>
+    <span class="nb">adr</span>     <span class="nv">r3</span><span class="o">,</span> <span class="nv">__lookup_processor_type_data</span>
+    <span class="nb">ldmia</span>   <span class="nv">r3</span><span class="o">,</span> <span class="o">{</span><span class="nv">r4</span><span class="o">-</span><span class="nv">r6</span><span class="o">}</span>
+    <span class="nb">sub</span>     <span class="nv">r3</span><span class="o">,</span> <span class="nv">r3</span><span class="o">,</span> <span class="nv">r4</span>          <span class="no">@</span> <span class="nv">get</span> <span class="nv">offset</span> <span class="nv">between</span> <span class="nv">runtime</span> <span class="nv">and</span> <span class="nv">link</span>
+    <span class="nb">add</span>     <span class="nv">r5</span><span class="o">,</span> <span class="nv">r5</span><span class="o">,</span> <span class="nv">r3</span>          <span class="no">@</span> <span class="nv">adjust</span> <span class="nv">__proc_info_begin</span> <span class="nv">to</span> <span class="nv">physical</span>
+    <span class="nb">add</span>     <span class="nv">r6</span><span class="o">,</span> <span class="nv">r6</span><span class="o">,</span> <span class="nv">r3</span>          <span class="no">@</span> <span class="nv">adjust</span> <span class="nv">__proc_info_end</span> <span class="nv">to</span> <span class="nv">physical</span>
+<span class="nl">1</span><span class="err">:</span>  <span class="nb">ldmia</span>   <span class="nv">r5</span><span class="o">,</span> <span class="o">{</span><span class="nv">r3</span><span class="o">,</span> <span class="nv">r4</span><span class="o">}</span>        <span class="no">@</span> <span class="nv">load</span> <span class="nv">value</span><span class="o">/</span><span class="nv">mask</span> <span class="nv">pair</span> <span class="nv">from</span> <span class="nv">proc_info</span>
+    <span class="nb">and</span>     <span class="nv">r4</span><span class="o">,</span> <span class="nv">r4</span><span class="o">,</span> <span class="nv">r9</span>          <span class="no">@</span> <span class="nv">mask</span> <span class="nv">CPU</span> <span class="nv">ID</span>
+    <span class="nb">teq</span>     <span class="nv">r3</span><span class="o">,</span> <span class="nv">r4</span>              <span class="no">@</span> <span class="nv">does</span> <span class="nv">it</span> <span class="nv">match</span><span class="o">?</span>
+    <span class="nb">beq</span>     <span class="mi">2</span><span class="nv">f</span>                  <span class="no">@</span> <span class="nv">yes</span> <span class="err">→</span> <span class="nv">found</span> <span class="nv">it</span>
+    <span class="nb">add</span>     <span class="nv">r5</span><span class="o">,</span> <span class="nv">r5</span><span class="o">,</span> <span class="o">#</span><span class="nv">PROC_INFO_SZ</span>
+    <span class="nb">cmp</span>     <span class="nv">r5</span><span class="o">,</span> <span class="nv">r6</span>
+    <span class="nb">blo</span>     <span class="mi">1</span><span class="nv">b</span>
+    <span class="nb">mov</span>     <span class="nv">r5</span><span class="o">,</span> <span class="o">#</span><span class="mi">0</span>              <span class="no">@</span> <span class="nv">not</span> <span class="nv">found</span>
+<span class="nl">2</span><span class="err">:</span>  <span class="nb">ret</span>     <span class="nv">lr</span></code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The matching entry (for Cortex-A15 in our QEMU session) is in
+<code>arch/arm/mm/proc-v7.S</code> and contains:</p>
+</div>
+<table class="tableblock frame-all grid-all" style="width: 90%;">
+<colgroup>
+<col style="width: 25%;">
+<col style="width: 75%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Field</th>
+<th class="tableblock halign-left valign-top">Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>.long 0x410fc0f0</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">CPUID match value for Cortex-A15</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>.long 0xff0ffff0</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">CPUID mask</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>__v7_setup</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Function pointer for CPU-specific initialization</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>v7_processor_functions</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Cache management function pointers</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>v7_tlb_fns</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">TLB operation function pointers</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>v7_user_fns</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">User memory access function pointers</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>v7_cache_fns</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Cache operation function pointers</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="sect2">
+<h3 id="_lookup_machine_type_non_dt_boot_verify_dtb_dt_boot"><a class="anchor" href="#_lookup_machine_type_non_dt_boot_verify_dtb_dt_boot"></a>4.3. __lookup_machine_type (non-DT boot) / Verify DTB (DT boot)</h3>
+<div class="paragraph">
+<p>For device-tree boots the machine type validation is straightforward — the DTB
+itself carries the compatibility string.  For legacy ATAG boots the code walks
+the <code><em>arch_info_begin</code> / <code></em>arch_info_end</code> table similarly to <code>proc_info</code>.</p>
+</div>
+<hr>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_phase_2_calculating_phys_offset_and_p2v_patching"><a class="anchor" href="#_phase_2_calculating_phys_offset_and_p2v_patching"></a>5. Phase 2: Calculating PHYS_OFFSET and P2V Patching</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>This is one of the most important and subtle sections of <code>head.S</code>.  The kernel
+must determine <strong>where in physical RAM it is actually running</strong> without being able
+to rely on any compile-time constant.</p>
+</div>
+<div class="sect2">
+<h3 id="_the_problem"><a class="anchor" href="#_the_problem"></a>5.1. The Problem</h3>
+<div class="paragraph">
+<p>The kernel was linked to execute at <code>0xC0208000</code> (virtual).  It is physically
+running at <code>0x40208000</code>.  The difference is <code>0x80000000</code>.  But this offset is
+not known at compile time — the same kernel image must boot on hardware where
+RAM starts at <code>0x10000000</code>, <code>0x40000000</code>, <code>0x80000000</code>, or anywhere else.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_the_solution_runtime_delta_calculation"><a class="anchor" href="#_the_solution_runtime_delta_calculation"></a>5.2. The Solution — Runtime Delta Calculation</h3>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/ks-p2v-delta.png" alt="P2V delta" width="700">
+</div>
+<div class="title">Figure 4. PHYS_OFFSET runtime calculation using the linked/runtime address delta</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm">    <span class="nb">adr</span>     <span class="nv">r3</span><span class="o">,</span> <span class="mi">2</span><span class="nv">f</span>              <span class="no">@</span> <span class="nv">r3</span> <span class="o">=</span> <span class="nv">RUNTIME</span> <span class="nv">addr</span> <span class="nv">of</span> <span class="nv">label</span> <span class="mi">2</span><span class="err">:</span> <span class="o">(</span><span class="nv">physical</span><span class="o">,</span> <span class="nv">e</span><span class="mf">.</span><span class="nv">g</span><span class="mf">.</span> <span class="mh">0x40208</span><span class="nv">xxx</span><span class="o">)</span>
+    <span class="nb">ldmia</span>   <span class="nv">r3</span><span class="o">,</span> <span class="o">{</span><span class="nv">r4</span><span class="o">,</span> <span class="nv">r8</span><span class="o">}</span>        <span class="no">@</span> <span class="nv">r4</span> <span class="o">=</span> <span class="nv">LINKED</span> <span class="nv">addr</span> <span class="nv">of</span> <span class="mi">2</span><span class="err">:</span> <span class="o">(</span><span class="nv">virtual</span> <span class="mh">0xC0208</span><span class="nv">xxx</span><span class="o">)</span>
+                                <span class="err">@</span> <span class="nv">r8</span> <span class="o">=</span> <span class="nv">PAGE_OFFSET</span> <span class="o">(</span><span class="nv">e</span><span class="mf">.</span><span class="nv">g</span><span class="mf">.</span> <span class="mh">0xC0000000</span><span class="o">)</span>
+    <span class="nb">sub</span>     <span class="nv">r4</span><span class="o">,</span> <span class="nv">r3</span><span class="o">,</span> <span class="nv">r4</span>          <span class="no">@</span> <span class="nv">r4</span> <span class="o">=</span> <span class="nv">delta</span> <span class="o">=</span> <span class="nv">runtime</span> <span class="err">−</span> <span class="nv">linked</span>
+                                <span class="err">@</span>           <span class="o">=</span> <span class="mh">0x40208</span><span class="nv">xxx</span> <span class="err">−</span> <span class="mh">0xC0208</span><span class="nv">xxx</span>
+                                <span class="err">@</span>           <span class="o">=</span> <span class="mh">0x80000000</span>  <span class="o">(</span><span class="nv">PHYS_OFFSET</span> <span class="err">−</span> <span class="nv">PAGE_OFFSET</span><span class="o">)</span>
+    <span class="nb">add</span>     <span class="nv">r8</span><span class="o">,</span> <span class="nv">r8</span><span class="o">,</span> <span class="nv">r4</span>          <span class="no">@</span> <span class="nv">r8</span> <span class="o">=</span> <span class="nv">PAGE_OFFSET</span> <span class="o">+</span> <span class="nv">delta</span>
+                                <span class="err">@</span>           <span class="o">=</span> <span class="mh">0xC0000000</span> <span class="o">+</span> <span class="mh">0x80000000</span> <span class="o">=</span> <span class="mh">0x40000000</span>
+                                <span class="err">@</span>           <span class="o">=</span> <span class="nv">PHYS_OFFSET</span>  <span class="err">✓</span>
+
+    <span class="err">2:</span>    <span class="mf">.</span><span class="nv">long</span>   <span class="mf">.</span>             <span class="no">@</span> <span class="nv">compile</span><span class="o">-</span><span class="nv">time</span> <span class="nv">address</span> <span class="nv">of</span> <span class="nv">this</span> <span class="nv">label</span> <span class="o">(</span><span class="nv">virtual</span><span class="o">)</span>
+          <span class="err">.</span><span class="nb">long</span>   <span class="nv">PAGE_OFFSET</span>   <span class="no">@</span> <span class="nv">compile</span><span class="o">-</span><span class="nv">time</span> <span class="nv">PAGE_OFFSET</span> <span class="nv">constant</span></code></pre>
+</div>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>The <code>.long .</code> trick stores the <strong>virtual</strong> address the linker assigned to label
+<code>2:</code> as a compile-time constant.  At runtime, <code>adr r3, 2f</code> gives the <strong>physical</strong>
+address of <code>2:</code>.  Subtracting them gives the exact offset between where the
+kernel is <strong>linked</strong> and where it is <strong>actually running</strong>.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_config_arm_patch_phys_virt_patching_every_p2v_conversion"><a class="anchor" href="#_config_arm_patch_phys_virt_patching_every_p2v_conversion"></a>5.3. CONFIG_ARM_PATCH_PHYS_VIRT — Patching Every P2V Conversion</h3>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/ks-p2v-patch.png" alt="P2V patching" width="700">
+</div>
+<div class="title">Figure 5. P2V instruction patching — every conversion site patched at boot</div>
+</div>
+<div class="paragraph">
+<p>The kernel contains thousands of calls to <code><em>virt_to_phys()</code> and
+<code></em>phys_to_virt()</code>.  Each one is compiled as an ARM <code>ADD</code> or <code>SUB</code> with an
+<strong>immediate operand</strong> that encodes the P2V offset.  At link time this immediate
+is a placeholder.  At boot, <code>__fixup_pv_table</code> patches every single one:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm"><span class="nl">__fixup_pv_table</span><span class="err">:</span>
+    <span class="nb">adr</span>     <span class="nv">r0</span><span class="o">,</span> <span class="mi">1</span><span class="nv">f</span>
+    <span class="nb">ldmia</span>   <span class="nv">r0</span><span class="o">,</span> <span class="o">{</span><span class="nv">r3</span><span class="o">-</span><span class="nv">r7</span><span class="o">}</span>
+    <span class="nb">mvn</span>     <span class="nv">ip</span><span class="o">,</span> <span class="o">#</span><span class="mi">0</span>
+    <span class="nb">subs</span>    <span class="nv">r3</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="nv">r3</span>          <span class="no">@</span> <span class="nv">compute</span> <span class="nv">offset</span> <span class="nv">to</span> <span class="nv">physical</span> <span class="nv">memory</span>
+    <span class="nb">add</span>     <span class="nv">r4</span><span class="o">,</span> <span class="nv">r4</span><span class="o">,</span> <span class="nv">r3</span>          <span class="no">@</span> <span class="nv">adjust</span> <span class="nv">__pv_table_begin</span> <span class="nv">to</span> <span class="nv">physical</span> <span class="nv">addr</span>
+    <span class="nb">add</span>     <span class="nv">r5</span><span class="o">,</span> <span class="nv">r5</span><span class="o">,</span> <span class="nv">r3</span>          <span class="no">@</span> <span class="nv">adjust</span> <span class="nv">__pv_table_end</span>   <span class="nv">to</span> <span class="nv">physical</span> <span class="nv">addr</span>
+    <span class="nb">add</span>     <span class="nv">r6</span><span class="o">,</span> <span class="nv">r6</span><span class="o">,</span> <span class="nv">r3</span>          <span class="no">@</span> <span class="nv">adjust</span> <span class="nv">__pv_phys_pfn_offset</span>
+    <span class="nb">add</span>     <span class="nv">r7</span><span class="o">,</span> <span class="nv">r7</span><span class="o">,</span> <span class="nv">r3</span>          <span class="no">@</span> <span class="nv">adjust</span> <span class="nv">__pv_offset</span>
+    <span class="nb">mov</span>     <span class="nv">r0</span><span class="o">,</span> <span class="nv">r8</span><span class="o">,</span> <span class="nb">lsr</span> <span class="o">#</span><span class="nv">PAGE_SHIFT</span>  <span class="no">@</span> <span class="nv">PFN</span> <span class="nv">of</span> <span class="nv">PHYS_OFFSET</span>
+    <span class="nb">str</span>     <span class="nv">r0</span><span class="o">,</span> <span class="o">[</span><span class="nv">r6</span><span class="o">]</span>            <span class="no">@</span> <span class="nv">save</span> <span class="nv">to</span> <span class="nv">__pv_phys_pfn_offset</span> <span class="o">(</span><span class="nv">used</span> <span class="nv">by</span> <span class="nv">MM</span> <span class="nv">later</span><span class="o">)</span>
+    <span class="err">...</span>
+    <span class="nb">b</span>       <span class="nv">__fixup_a_pv_table</span>  <span class="no">@</span> <span class="nv">loop</span><span class="err">:</span> <span class="nv">patch</span> <span class="nv">every</span> <span class="nv">ADD</span><span class="o">/</span><span class="nv">SUB</span> <span class="nv">in</span> <span class="mf">.</span><span class="nv">pv_table</span>
+
+<span class="nl">1</span><span class="err">:</span>  <span class="err">.</span><span class="nb">long</span>   <span class="mf">.</span>
+    <span class="err">.</span><span class="nb">long</span>   <span class="nv">__pv_table_begin</span>
+    <span class="err">.</span><span class="nb">long</span>   <span class="nv">__pv_table_end</span>
+    <span class="err">.</span><span class="nb">long</span>   <span class="nv">__pv_phys_pfn_offset</span>
+    <span class="err">.</span><span class="nb">long</span>   <span class="nv">__pv_offset</span></code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>After this loop, every <code><em>virt_to_phys(x)</code> in the kernel correctly computes
+<code>x + (PHYS_OFFSET - PAGE_OFFSET)</code> and every <code></em>phys_to_virt(x)</code> correctly
+computes <code>x - (PHYS_OFFSET - PAGE_OFFSET)</code>.</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 22.2222%;">
+<col style="width: 44.4444%;">
+<col style="width: 33.3334%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Symbol</th>
+<th class="tableblock halign-left valign-top">Before Patching</th>
+<th class="tableblock halign-left valign-top">After Patching (our session)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>__virt_to_phys</code> <code>ADD</code> immediate</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">placeholder <code>0x00000000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x80000000</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>__phys_to_virt</code> <code>SUB</code> immediate</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">placeholder <code>0x00000000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x80000000</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>__pv_phys_pfn_offset</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">undefined</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40000</code> (PHYS_OFFSET &gt;&gt; PAGE_SHIFT)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>__pv_offset</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">undefined</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x80000000</code></p></td>
+</tr>
+</tbody>
+</table>
+<div class="admonitionblock tip">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-tip" title="Tip"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>This patching is <strong>also</strong> performed every time a kernel module (<code>.ko</code>) is loaded,
+because modules also contain a <code>.pv_table</code> section.  The same
+<code>__fixup_a_pv_table</code> loop is re-used for module loading.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<hr>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_phase_3_create_page_tables_building_the_initial_mmu_mappings"><a class="anchor" href="#_phase_3_create_page_tables_building_the_initial_mmu_mappings"></a>6. Phase 3: __create_page_tables — Building the Initial MMU Mappings</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Before the MMU can be turned on, the kernel must create a minimal page table
+that maps:</p>
+</div>
+<div class="olist arabic">
+<ol class="arabic">
+<li>
+<p>The kernel code itself at its virtual address (<code>0xC0208000+</code>)</p>
+</li>
+<li>
+<p>An <strong>identity mapping</strong> covering the few instructions immediately after MMU
+activation (required for pipeline flush safety)</p>
+</li>
+<li>
+<p>The DTB region (so the kernel can read it after MMU is on)</p>
+</li>
+</ol>
+</div>
+<div class="sect2">
+<h3 id="_swapper_pg_dir_the_initial_page_table_location"><a class="anchor" href="#_swapper_pg_dir_the_initial_page_table_location"></a>6.1. swapper_pg_dir — The Initial Page Table Location</h3>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/ks-swapper-pg-dir.png" alt="swapper_pg_dir" width="700">
+</div>
+<div class="title">Figure 6. swapper_pg_dir physical address calculation via pgtbl macro</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm"><span class="nl">__create_page_tables</span><span class="err">:</span>
+    <span class="nb">pgtbl</span>   <span class="nv">r4</span><span class="o">,</span> <span class="nv">r8</span>              <span class="no">@</span> <span class="nv">r4</span> <span class="o">=</span> <span class="nv">physical</span> <span class="nv">address</span> <span class="nv">of</span> <span class="nv">swapper_pg_dir</span>
+
+    <span class="err">@</span> <span class="nv">The</span> <span class="nv">pgtbl</span> <span class="nv">macro</span> <span class="nv">computes</span><span class="err">:</span>
+    <span class="err">@</span>   <span class="nv">r4</span> <span class="o">=</span> <span class="nv">PHYS_OFFSET</span> <span class="o">+</span> <span class="nv">TEXT_OFFSET</span> <span class="o">-</span> <span class="nv">PG_DIR_SIZE</span>
+    <span class="err">@</span>      <span class="o">=</span> <span class="mh">0x40000000</span>  <span class="o">+</span> <span class="mh">0x208000</span>    <span class="o">-</span> <span class="mh">0x4000</span>
+    <span class="err">@</span>      <span class="o">=</span> <span class="mh">0x40204000</span>
+    <span class="err">@</span>
+    <span class="err">@</span> <span class="nv">In</span> <span class="nv">virtual</span> <span class="nv">memory</span> <span class="nv">this</span> <span class="nv">will</span> <span class="nv">be</span> <span class="nv">at</span><span class="err">:</span>
+    <span class="err">@</span>   <span class="nv">swapper_pg_dir</span> <span class="o">=</span> <span class="nv">PAGE_OFFSET</span> <span class="o">+</span> <span class="nv">TEXT_OFFSET</span> <span class="o">-</span> <span class="nv">PG_DIR_SIZE</span>
+    <span class="err">@</span>                  <span class="o">=</span> <span class="mh">0xC0000000</span>  <span class="o">+</span> <span class="mh">0x208000</span>    <span class="o">-</span> <span class="mh">0x4000</span>
+    <span class="err">@</span>                  <span class="o">=</span> <span class="mh">0xC0204000</span></code></pre>
+</div>
+</div>
+<table class="tableblock frame-all grid-all" style="width: 90%;">
+<colgroup>
+<col style="width: 28.5714%;">
+<col style="width: 28.5714%;">
+<col style="width: 42.8572%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Symbol</th>
+<th class="tableblock halign-left valign-top">Value</th>
+<th class="tableblock halign-left valign-top">Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>PHYS_OFFSET</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40000000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Physical RAM base (computed in Phase 2)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>TEXT_OFFSET</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x208000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Offset of <code>stext</code> from RAM base</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>PG_DIR_SIZE</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x4000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Classic MMU: 16 KiB; LPAE: 20 KiB (<code>0x5000</code>)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>swapper_pg_dir</code> (phys)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40204000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Where initial page table is written</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>swapper_pg_dir</code> (virt)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0xC0204000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Where it will appear after MMU on</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="sect2">
+<h3 id="_step_1_zero_the_entire_page_table"><a class="anchor" href="#_step_1_zero_the_entire_page_table"></a>6.2. Step 1: Zero the Entire Page Table</h3>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm">    <span class="nb">mov</span>     <span class="nv">r0</span><span class="o">,</span> <span class="nv">r4</span>          <span class="no">@</span> <span class="nv">r0</span> <span class="o">=</span> <span class="nv">start</span> <span class="nv">of</span> <span class="nv">page</span> <span class="nv">table</span> <span class="o">(</span><span class="mh">0x40204000</span><span class="o">)</span>
+    <span class="nb">mov</span>     <span class="nv">r3</span><span class="o">,</span> <span class="o">#</span><span class="mi">0</span>
+    <span class="nb">add</span>     <span class="nv">r6</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="o">#</span><span class="nv">PG_DIR_SIZE</span>  <span class="no">@</span> <span class="nv">r6</span> <span class="o">=</span> <span class="nv">end</span> <span class="nv">of</span> <span class="nv">page</span> <span class="nv">table</span>
+<span class="nl">1</span><span class="err">:</span>  <span class="nb">str</span>     <span class="nv">r3</span><span class="o">,</span> <span class="o">[</span><span class="nv">r0</span><span class="o">],</span> <span class="o">#</span><span class="mi">4</span>    <span class="no">@</span> <span class="nv">zero</span> <span class="nv">one</span> <span class="nv">word</span><span class="o">,</span> <span class="nv">advance</span>
+    <span class="nb">str</span>     <span class="nv">r3</span><span class="o">,</span> <span class="o">[</span><span class="nv">r0</span><span class="o">],</span> <span class="o">#</span><span class="mi">4</span>
+    <span class="nb">str</span>     <span class="nv">r3</span><span class="o">,</span> <span class="o">[</span><span class="nv">r0</span><span class="o">],</span> <span class="o">#</span><span class="mi">4</span>
+    <span class="nb">str</span>     <span class="nv">r3</span><span class="o">,</span> <span class="o">[</span><span class="nv">r0</span><span class="o">],</span> <span class="o">#</span><span class="mi">4</span>
+    <span class="nb">teq</span>     <span class="nv">r0</span><span class="o">,</span> <span class="nv">r6</span>
+    <span class="nb">bne</span>     <span class="mi">1</span><span class="nv">b</span>              <span class="no">@</span> <span class="nv">loop</span> <span class="nv">until</span> <span class="nv">all</span> <span class="mi">4096</span> <span class="nv">entries</span> <span class="nv">zeroed</span></code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>This unrolled 4-word loop clears all 16,384 bytes (4,096 × 4-byte entries) of
+<code>swapper_pg_dir</code> to zero — meaning "no mapping" for every virtual address.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_arm32_page_table_format_section_descriptors"><a class="anchor" href="#_arm32_page_table_format_section_descriptors"></a>6.3. ARM32 Page Table Format — Section Descriptors</h3>
+<div class="paragraph">
+<p>The initial page table uses <strong>section mappings</strong> — each entry covers exactly 1 MiB.
+This means:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>The 16 KiB page table has 4,096 entries (16,384 bytes ÷ 4 bytes/entry)</p>
+</li>
+<li>
+<p>Each entry describes 1 MiB of virtual address space</p>
+</li>
+<li>
+<p>4,096 × 1 MiB = 4 GiB — the entire 32-bit address space</p>
+</li>
+</ul>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/ks-page-table-format.png" alt="Page table format" width="700">
+</div>
+<div class="title">Figure 7. ARM32 section descriptor format — bit field breakdown</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code> 31          20 19 18 17 16 15  12 11 10  9  5 4  3  2 1 0
+┌─────────────┬──┬──┬──┬──┬──────┬────┬───┬────┬──┬────┬────┐
+│ Base[31:20] │NS│nG│ S│APX│TEX+CB│AP  │DOM│ P  │XN│ CB │ 10 │
+└─────────────┴──┴──┴──┴──┴──────┴────┴───┴────┴──┴────┴────┘
+                                                         ↑
+                                                    Must be 0b10
+                                                    = Section type</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>For the initial kernel mapping the entry is built as:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm">    <span class="nb">orr</span>     <span class="nv">r6</span><span class="o">,</span> <span class="nv">r7</span><span class="o">,</span> <span class="o">#</span><span class="nv">PMD_TYPE_SECT</span> <span class="nv">| PMD_SECT_AP_WRITE |</span> <span class="nv">PMD_SECT_AP_READ</span>
+    <span class="nb">orr</span>     <span class="nv">r6</span><span class="o">,</span> <span class="nv">r6</span><span class="o">,</span> <span class="o">#</span><span class="nv">PMD_FLAGS_CACHED</span>          <span class="no">@</span> <span class="nv">C</span><span class="o">=</span><span class="mi">1</span> <span class="nv">B</span><span class="o">=</span><span class="mi">1</span>
+    <span class="err">@</span> <span class="nv">r6</span> <span class="nv">is</span> <span class="nv">now</span> <span class="nv">the</span> <span class="nv">template</span> <span class="nv">section</span> <span class="nv">descriptor</span> <span class="nv">for</span> <span class="nv">kernel</span> <span class="nv">sections</span>
+    <span class="err">@</span> <span class="nv">bits</span> <span class="o">[</span><span class="mi">31</span><span class="err">:</span><span class="mi">20</span><span class="o">]</span> <span class="nv">will</span> <span class="nv">be</span> <span class="nv">filled</span> <span class="nv">with</span> <span class="nv">the</span> <span class="nv">physical</span> <span class="nv">base</span> <span class="nv">address</span></code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_step_2_map_kernel_sections_virtual_physical"><a class="anchor" href="#_step_2_map_kernel_sections_virtual_physical"></a>6.4. Step 2: Map Kernel Sections (Virtual → Physical)</h3>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm">    <span class="err">@</span> <span class="nv">r8</span>  <span class="o">=</span> <span class="nv">PHYS_OFFSET</span> <span class="o">(</span><span class="mh">0x40000000</span><span class="o">)</span>
+    <span class="err">@</span> <span class="nv">r10</span> <span class="o">=</span> <span class="nv">proc_info</span> <span class="nv">pointer</span> <span class="o">(</span><span class="nv">from</span> <span class="nv">__lookup_processor_type</span><span class="o">)</span>
+    <span class="err">@</span> <span class="nv">r7</span>  <span class="o">=</span> <span class="nv">section</span> <span class="nv">descriptor</span> <span class="nv">flags</span>
+
+    <span class="nb">adr</span>     <span class="nv">r0</span><span class="o">,</span> <span class="nv">__turn_mmu_on_loc</span>
+    <span class="nb">ldmia</span>   <span class="nv">r0</span><span class="o">,</span> <span class="o">{</span><span class="nv">r3</span><span class="o">,</span> <span class="nv">r5</span><span class="o">,</span> <span class="nv">r6</span><span class="o">}</span>
+    <span class="nb">sub</span>     <span class="nv">r0</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="nv">r3</span>          <span class="no">@</span> <span class="nv">r0</span> <span class="o">=</span> <span class="nv">physical</span> <span class="nv">offset</span>
+
+    <span class="err">@</span> <span class="nv">Map</span> <span class="nv">the</span> <span class="nv">kernel</span> <span class="nv">sections</span><span class="err">:</span>
+    <span class="err">@</span> <span class="nv">virtual</span>  <span class="mh">0xC0200000</span><span class="err">–</span><span class="mh">0xC02FFFFF</span>  <span class="err">→</span>  <span class="nv">physical</span>  <span class="mh">0x40200000</span><span class="err">–</span><span class="mh">0x402FFFFF</span>
+    <span class="nb">add</span>     <span class="nv">r0</span><span class="o">,</span> <span class="nv">r4</span><span class="o">,</span> <span class="o">#(</span><span class="nv">KERNEL_RAM_VADDR</span> <span class="o">&gt;&gt;</span> <span class="mi">18</span><span class="o">)</span>   <span class="no">@</span> <span class="nv">PGD</span> <span class="nv">index</span> <span class="nv">for</span> <span class="mh">0xC0200000</span>
+    <span class="nb">orr</span>     <span class="nv">r3</span><span class="o">,</span> <span class="nv">r7</span><span class="o">,</span> <span class="nv">r8</span><span class="o">,</span> <span class="nb">lsr</span> <span class="o">#(</span><span class="nv">SECTION_SHIFT</span> <span class="o">-</span> <span class="nv">PMD_ORDER</span><span class="o">)</span>
+    <span class="nb">add</span>     <span class="nv">r3</span><span class="o">,</span> <span class="nv">r3</span><span class="o">,</span> <span class="o">#(</span> <span class="nv">PHYS_OFFSET</span> <span class="o">&gt;&gt;</span> <span class="nv">SECTION_SHIFT</span><span class="o">)</span> <span class="o">&lt;&lt;</span> <span class="nv">PMD_ORDER</span>
+<span class="nl">1</span><span class="err">:</span>  <span class="nb">str</span>     <span class="nv">r3</span><span class="o">,</span> <span class="o">[</span><span class="nv">r0</span><span class="o">],</span> <span class="o">#</span><span class="mi">4</span>        <span class="no">@</span> <span class="nv">write</span> <span class="nv">section</span> <span class="nv">descriptor</span>
+    <span class="nb">add</span>     <span class="nv">r3</span><span class="o">,</span> <span class="nv">r3</span><span class="o">,</span> <span class="o">#</span><span class="mi">1</span> <span class="o">&lt;&lt;</span> <span class="nv">SECTION_SHIFT</span>  <span class="no">@</span> <span class="nv">next</span> <span class="mi">1</span><span class="nv">MB</span>
+    <span class="nb">cmp</span>     <span class="nv">r0</span><span class="o">,</span> <span class="nv">r6</span>
+    <span class="nb">bls</span>     <span class="mi">1</span><span class="nv">b</span>                  <span class="no">@</span> <span class="nv">loop</span> <span class="nv">for</span> <span class="nv">all</span> <span class="nv">kernel</span> <span class="nv">sections</span></code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_step_3_map_identity_sections_physical_virtual"><a class="anchor" href="#_step_3_map_identity_sections_physical_virtual"></a>6.5. Step 3: Map Identity Sections (Physical = Virtual)</h3>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm">    <span class="err">@</span> <span class="nv">Map</span> <span class="nv">identical</span><span class="err">:</span> <span class="nv">virtual</span> <span class="mh">0x40200000</span> <span class="err">→</span> <span class="nv">physical</span> <span class="mh">0x40200000</span>
+    <span class="err">@</span> <span class="nv">This</span> <span class="nv">keeps</span> <span class="nv">PC</span> <span class="nv">valid</span> <span class="nv">immediately</span> <span class="nv">after</span> <span class="s2">"mcr p15,0,r0,c1,c0,0"</span> <span class="o">(</span><span class="nv">MMU</span> <span class="nv">on</span><span class="o">)</span>
+
+    <span class="nb">adr</span>     <span class="nv">r0</span><span class="o">,</span> <span class="nv">__turn_mmu_on</span>
+    <span class="nb">mov</span>     <span class="nv">r0</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="nb">lsr</span> <span class="o">#</span><span class="nv">SECTION_SHIFT</span>   <span class="no">@</span> <span class="nv">which</span> <span class="mi">1</span><span class="nv">MB</span> <span class="nv">section</span> <span class="nv">are</span> <span class="nv">we</span> <span class="nv">in</span><span class="o">?</span>
+    <span class="nb">orr</span>     <span class="nv">r3</span><span class="o">,</span> <span class="nv">r7</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="nb">lsl</span> <span class="o">#</span><span class="nv">SECTION_SHIFT</span>  <span class="no">@</span> <span class="nv">section</span> <span class="nv">descriptor</span><span class="err">:</span> <span class="nv">phys</span> <span class="o">=</span> <span class="nv">virt</span>
+    <span class="nb">add</span>     <span class="nv">r0</span><span class="o">,</span> <span class="nv">r4</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="nb">lsl</span> <span class="o">#</span><span class="nv">PMD_ORDER</span>   <span class="no">@</span> <span class="nv">PGD</span> <span class="nv">index</span> <span class="nv">for</span> <span class="nv">identity</span> <span class="nv">entry</span>
+    <span class="nb">str</span>     <span class="nv">r3</span><span class="o">,</span> <span class="o">[</span><span class="nv">r0</span><span class="o">]</span>            <span class="no">@</span> <span class="nv">write</span> <span class="nv">identity</span> <span class="nv">section</span> <span class="nv">descriptor</span></code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_step_4_map_the_dtb"><a class="anchor" href="#_step_4_map_the_dtb"></a>6.6. Step 4: Map the DTB</h3>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm">    <span class="err">@</span> <span class="nv">Map</span> <span class="mi">1</span> <span class="nv">or</span> <span class="mi">2</span> <span class="nv">sections</span> <span class="nv">covering</span> <span class="nv">the</span> <span class="nv">DTB</span> <span class="o">(</span><span class="nv">passed</span> <span class="nv">in</span> <span class="nv">r2</span> <span class="o">=</span> <span class="mh">0x48000000</span><span class="o">)</span>
+    <span class="nb">mov</span>     <span class="nv">r3</span><span class="o">,</span> <span class="nv">r2</span><span class="o">,</span> <span class="nb">lsr</span> <span class="o">#</span><span class="nv">SECTION_SHIFT</span>     <span class="no">@</span> <span class="nv">DTB</span> <span class="nv">section</span> <span class="nv">index</span>
+    <span class="nb">add</span>     <span class="nv">r0</span><span class="o">,</span> <span class="nv">r4</span><span class="o">,</span> <span class="nv">r3</span><span class="o">,</span> <span class="nb">lsl</span> <span class="o">#</span><span class="nv">PMD_ORDER</span>     <span class="no">@</span> <span class="nv">PGD</span> <span class="nv">index</span> <span class="nv">for</span> <span class="nv">DTB</span> <span class="nv">virtual</span> <span class="nv">addr</span>
+    <span class="nb">rsb</span>     <span class="nv">r3</span><span class="o">,</span> <span class="nv">r3</span><span class="o">,</span> <span class="o">#(</span><span class="nv">PAGE_OFFSET</span> <span class="o">&gt;&gt;</span> <span class="o">(</span><span class="nv">SECTION_SHIFT</span> <span class="o">-</span> <span class="nv">PMD_ORDER</span><span class="o">))</span>
+    <span class="nb">orr</span>     <span class="nv">r3</span><span class="o">,</span> <span class="nv">r7</span><span class="o">,</span> <span class="nv">r3</span><span class="o">,</span> <span class="nb">lsl</span> <span class="o">#</span><span class="nv">SECTION_SHIFT</span> <span class="no">@</span> <span class="nv">DTB</span> <span class="nv">section</span> <span class="nv">descriptor</span>
+    <span class="nb">orr</span>     <span class="nv">r3</span><span class="o">,</span> <span class="nv">r3</span><span class="o">,</span> <span class="o">#</span><span class="nv">PMD_SECT_XN</span>           <span class="no">@</span> <span class="nv">mark</span> <span class="nv">execute</span><span class="o">-</span><span class="nv">never</span>
+    <span class="nb">str</span>     <span class="nv">r3</span><span class="o">,</span> <span class="o">[</span><span class="nv">r0</span><span class="o">],</span> <span class="o">#</span><span class="mi">4</span>                   <span class="no">@</span> <span class="nv">first</span> <span class="nv">section</span>
+    <span class="nb">add</span>     <span class="nv">r3</span><span class="o">,</span> <span class="nv">r3</span><span class="o">,</span> <span class="o">#</span><span class="mi">1</span> <span class="o">&lt;&lt;</span> <span class="nv">SECTION_SHIFT</span>
+    <span class="nb">str</span>     <span class="nv">r3</span><span class="o">,</span> <span class="o">[</span><span class="nv">r0</span><span class="o">]</span>                       <span class="no">@</span> <span class="nv">second</span> <span class="nv">section</span> <span class="o">(</span><span class="nv">DTB</span> <span class="nv">may</span> <span class="nv">span</span> <span class="nv">two</span><span class="o">)</span></code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_the_two_key_mappings"><a class="anchor" href="#_the_two_key_mappings"></a>6.7. The Two Key Mappings</h3>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/ks-create-page-tables.png" alt="Create page tables" width="700">
+</div>
+<div class="title">Figure 8. Side-by-side: physical memory vs virtual mapping after __create_page_tables</div>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 22.2222%;">
+<col style="width: 22.2222%;">
+<col style="width: 22.2222%;">
+<col style="width: 33.3334%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Mapping Type</th>
+<th class="tableblock halign-left valign-top">Virtual Range</th>
+<th class="tableblock halign-left valign-top">Physical Range</th>
+<th class="tableblock halign-left valign-top">Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Kernel sections</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0xC0200000</code> – <code>0xC02FFFFF</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40200000</code> – <code>0x402FFFFF</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Where kernel will execute after MMU on (non-identity)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Identity sections</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40200000</code> – <code>0x402FFFFF</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40200000</code> – <code>0x402FFFFF</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Pipeline flush safety — covers <code>__turn_mmu_on</code> + 3 NOPs</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">DTB sections</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>~0xC8000000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x48000000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Kernel can read DTB in virtual memory after boot</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="sect2">
+<h3 id="_linux_page_table_terminology_arm32"><a class="anchor" href="#_linux_page_table_terminology_arm32"></a>6.8. Linux Page Table Terminology (ARM32)</h3>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 20%;">
+<col style="width: 20%;">
+<col style="width: 60%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Linux Name</th>
+<th class="tableblock halign-left valign-top">ARM Hardware</th>
+<th class="tableblock halign-left valign-top">Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">PGD (Page Global Directory)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">First-level table (L1)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">16 KiB; 4,096 entries; each covers 1 MiB. This IS the <code>swapper_pg_dir</code>.
+  Written to <code>TTBR0</code>.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">PMD (Page Middle Directory)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Same as PGD on classic MMU</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">For classic ARM32: PGD and PMD are <strong>folded</strong> — same structure.
+  On LPAE: PMD is a separate 4-entry table (64-bit entries, 2 MiB per section).</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">PTE (Page Table Entry)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Second-level entries</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Used for 4 KiB page mappings. The initial boot table does NOT use these —
+  it uses section descriptors entirely.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">P4D, PUD</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Not used on ARM32</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">These Linux levels are <strong>folded</strong> (unused) on ARM32.</p></td>
+</tr>
+</tbody>
+</table>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>The initial page table uses <strong>section</strong> descriptors exclusively — no second-level
+page tables are created.  Each 4-byte entry in <code>swapper_pg_dir</code> directly maps
+a 1 MiB section.  This is intentional: it is the simplest possible mapping
+sufficient to boot the kernel.  The full fine-grained page tables are built
+later by <code>paging_init()</code> in <code>setup_arch()</code>.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<hr>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_phase_4_cpu_specific_setup_proc_v7_s"><a class="anchor" href="#_phase_4_cpu_specific_setup_proc_v7_s"></a>7. Phase 4: CPU-Specific Setup — proc-v7.S</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Before enabling the MMU, the CPU must be configured.  <code>stext</code> calls the
+per-CPU initialization function via the <code>proc_info</code> pointer found in Phase 1:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm">    <span class="nb">ldr</span>     <span class="nv">r12</span><span class="o">,</span> <span class="o">[</span><span class="nv">r10</span><span class="o">,</span> <span class="o">#</span><span class="nv">PROCINFO_INITFUNC</span><span class="o">]</span>  <span class="no">@</span> <span class="nv">r12</span> <span class="o">=</span> <span class="nv">__v7_setup</span> <span class="nv">offset</span>
+    <span class="nb">add</span>     <span class="nv">r12</span><span class="o">,</span> <span class="nv">r12</span><span class="o">,</span> <span class="nv">r10</span>                   <span class="no">@</span> <span class="nv">r12</span> <span class="o">=</span> <span class="nv">physical</span> <span class="nv">addr</span> <span class="nv">of</span> <span class="nv">__v7_setup</span>
+    <span class="nb">ret</span>     <span class="nv">r12</span>                             <span class="no">@</span> <span class="nv">jump</span><span class="o">,</span> <span class="nv">lr</span> <span class="o">=</span> <span class="nv">addr</span> <span class="nv">of</span> <span class="nv">label</span> <span class="mi">1</span><span class="err">:</span>
+                                            <span class="err">@</span>            <span class="o">(</span><span class="nv">which</span> <span class="nv">branches</span> <span class="nv">to</span> <span class="nv">__enable_mmu</span><span class="o">)</span>
+<span class="nl">1</span><span class="err">:</span>  <span class="nb">b</span>       <span class="nv">__enable_mmu</span></code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>For Cortex-A class CPUs, <code>__v7_setup</code> in <code>arch/arm/mm/proc-v7.S</code> performs:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm"><span class="nl">__v7_setup</span><span class="err">:</span>
+    <span class="nb">adr</span>     <span class="nv">r12</span><span class="o">,</span> <span class="nv">__v7_setup_stack</span>   <span class="no">@</span> <span class="nv">save</span> <span class="nv">registers</span> <span class="nv">to</span> <span class="nv">local</span> <span class="nv">stack</span>
+    <span class="nb">stmia</span>   <span class="nv">r12</span><span class="o">,</span> <span class="o">{</span><span class="nv">r0</span><span class="o">-</span><span class="nv">r5</span><span class="o">,</span> <span class="nv">r7</span><span class="o">,</span> <span class="nv">r9</span><span class="o">,</span> <span class="nv">r11</span><span class="o">,</span> <span class="nv">lr</span><span class="o">}</span>
+
+    <span class="nb">bl</span>      <span class="nv">v7_flush_dcache_all</span>     <span class="no">@</span> <span class="nv">clean</span> <span class="nv">and</span> <span class="nv">invalidate</span> <span class="nv">all</span> <span class="nv">D</span><span class="o">-</span><span class="nv">cache</span>
+    <span class="nb">ldmia</span>   <span class="nv">r12</span><span class="o">,</span> <span class="o">{</span><span class="nv">r0</span><span class="o">-</span><span class="nv">r5</span><span class="o">,</span> <span class="nv">r7</span><span class="o">,</span> <span class="nv">r9</span><span class="o">,</span> <span class="nv">r11</span><span class="o">,</span> <span class="nv">lr</span><span class="o">}</span>
+
+    <span class="nb">mov</span>     <span class="nv">r10</span><span class="o">,</span> <span class="o">#</span><span class="mi">0</span>
+    <span class="nb">mcr</span>     <span class="nv">p15</span><span class="o">,</span> <span class="mi">0</span><span class="o">,</span> <span class="nv">r10</span><span class="o">,</span> <span class="nv">c7</span><span class="o">,</span> <span class="nv">c5</span><span class="o">,</span> <span class="mi">0</span>  <span class="no">@</span> <span class="nv">invalidate</span> <span class="nv">I</span><span class="o">-</span><span class="nv">cache</span> <span class="o">+</span> <span class="nv">BTB</span>
+    <span class="nb">dsb</span>
+    <span class="nb">mcr</span>     <span class="nv">p15</span><span class="o">,</span> <span class="mi">0</span><span class="o">,</span> <span class="nv">r10</span><span class="o">,</span> <span class="nv">c8</span><span class="o">,</span> <span class="nv">c7</span><span class="o">,</span> <span class="mi">0</span>  <span class="no">@</span> <span class="nv">invalidate</span> <span class="nv">I</span><span class="o">+</span><span class="nv">D</span> <span class="nv">TLBs</span> <span class="o">(</span><span class="nv">all</span><span class="o">)</span>
+
+    <span class="err">@</span> <span class="nv">Configure</span> <span class="nv">TTBCR</span> <span class="err">—</span> <span class="nv">split</span> <span class="nv">at</span> <span class="nv">PAGE_OFFSET</span>
+    <span class="err">@</span> <span class="nv">For</span> <span class="nv">PAGE_OFFSET</span> <span class="o">=</span> <span class="mh">0xC0000000</span><span class="err">:</span> <span class="nv">T1SZ</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">(</span><span class="nv">TTBR1</span> <span class="nv">covers</span> <span class="nv">top</span> <span class="mi">1</span> <span class="nv">GiB</span><span class="o">)</span>
+    <span class="nb">mrc</span>     <span class="nv">p15</span><span class="o">,</span> <span class="mi">0</span><span class="o">,</span> <span class="nv">r10</span><span class="o">,</span> <span class="nv">c2</span><span class="o">,</span> <span class="nv">c0</span><span class="o">,</span> <span class="mi">2</span>  <span class="no">@</span> <span class="nv">read</span> <span class="nv">current</span> <span class="nv">TTBCR</span>
+    <span class="nb">orr</span>     <span class="nv">r10</span><span class="o">,</span> <span class="nv">r10</span><span class="o">,</span> <span class="o">#</span><span class="nv">TTB_FLAGS_SMP</span>
+    <span class="nb">mcr</span>     <span class="nv">p15</span><span class="o">,</span> <span class="mi">0</span><span class="o">,</span> <span class="nv">r10</span><span class="o">,</span> <span class="nv">c2</span><span class="o">,</span> <span class="nv">c0</span><span class="o">,</span> <span class="mi">2</span>  <span class="no">@</span> <span class="nv">write</span> <span class="nv">TTBCR</span>
+
+    <span class="err">@</span> <span class="nv">Prepare</span> <span class="nv">SCTLR</span> <span class="nv">value</span> <span class="nv">in</span> <span class="nv">r0</span> <span class="err">—</span> <span class="nv">cache</span> <span class="nv">enables</span><span class="o">,</span> <span class="nv">branch</span> <span class="nv">prediction</span><span class="o">,</span> <span class="nv">MMU</span> <span class="nv">bit</span>
+    <span class="err">@</span> <span class="nv">The</span> <span class="nv">M</span> <span class="nv">bit</span> <span class="o">(</span><span class="nv">MMU</span> <span class="nv">enable</span><span class="o">)</span> <span class="nv">is</span> <span class="nv">SET</span> <span class="nv">in</span> <span class="nv">this</span> <span class="nv">value</span> <span class="nv">but</span> <span class="nv">the</span> <span class="nv">register</span> <span class="nv">is</span> <span class="nv">NOT</span>
+    <span class="err">@</span> <span class="nv">written</span> <span class="nv">yet</span> <span class="err">—</span> <span class="nv">that</span> <span class="nv">happens</span> <span class="nv">in</span> <span class="nv">__turn_mmu_on</span>
+    <span class="nb">mrc</span>     <span class="nv">p15</span><span class="o">,</span> <span class="mi">0</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="nv">c1</span><span class="o">,</span> <span class="nv">c0</span><span class="o">,</span> <span class="mi">0</span>   <span class="no">@</span> <span class="nv">read</span> <span class="nv">current</span> <span class="nv">SCTLR</span>
+    <span class="nb">orr</span>     <span class="nv">r0</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="o">#</span><span class="nv">CR_M</span>           <span class="no">@</span> <span class="nv">set</span> <span class="nv">MMU</span> <span class="nv">enable</span> <span class="nv">bit</span>
+    <span class="nb">orr</span>     <span class="nv">r0</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="o">#</span><span class="nv">CR_C</span>           <span class="no">@</span> <span class="nv">set</span> <span class="nv">D</span><span class="o">-</span><span class="nv">cache</span> <span class="nv">enable</span> <span class="nv">bit</span>
+    <span class="nb">orr</span>     <span class="nv">r0</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="o">#</span><span class="nv">CR_I</span>           <span class="no">@</span> <span class="nv">set</span> <span class="nv">I</span><span class="o">-</span><span class="nv">cache</span> <span class="nv">enable</span> <span class="nv">bit</span>
+    <span class="nb">ret</span>     <span class="nv">lr</span>                      <span class="no">@</span> <span class="nv">return</span> <span class="nv">to</span> <span class="nv">label</span> <span class="mi">1</span><span class="err">:</span> <span class="err">→</span> <span class="nv">__enable_mmu</span></code></pre>
+</div>
+</div>
+<hr>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_phase_5_enable_mmu_turning_on_the_mmu"><a class="anchor" href="#_phase_5_enable_mmu_turning_on_the_mmu"></a>8. Phase 5: __enable_mmu — Turning On the MMU</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>This is the most critical section of the entire boot sequence.
+One wrong instruction here causes an immediate fault with no way to recover.</p>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/ks-enable-mmu.png" alt="Enable MMU" width="660">
+</div>
+<div class="title">Figure 9. MMU activation sequence and pipeline flush strategy</div>
+</div>
+<div class="sect2">
+<h3 id="_the_complete_enable_mmu_sequence"><a class="anchor" href="#_the_complete_enable_mmu_sequence"></a>8.1. The Complete __enable_mmu Sequence</h3>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm"><span class="nl">__enable_mmu</span><span class="err">:</span>
+    <span class="err">@</span> <span class="nv">r0</span>  <span class="o">=</span> <span class="nv">SCTLR</span> <span class="nv">value</span> <span class="nv">to</span> <span class="nv">write</span> <span class="o">(</span><span class="nv">MMU</span><span class="o">+</span><span class="nv">cache</span> <span class="nv">bits</span> <span class="nv">set</span><span class="o">)</span>
+    <span class="err">@</span> <span class="nv">r4</span>  <span class="o">=</span> <span class="nv">physical</span> <span class="nv">address</span> <span class="nv">of</span> <span class="nv">swapper_pg_dir</span> <span class="o">(</span><span class="mh">0x40204000</span><span class="o">)</span>
+    <span class="err">@</span> <span class="nv">r13</span> <span class="o">=</span> <span class="nv">virtual</span> <span class="nv">address</span> <span class="nv">of</span> <span class="nv">__mmap_switched</span> <span class="o">(</span><span class="nv">to</span> <span class="nv">jump</span> <span class="nv">to</span> <span class="nv">after</span> <span class="nv">MMU</span> <span class="nv">on</span><span class="o">)</span>
+
+<span class="cp">#ifndef CONFIG_CPU_ICACHE_DISABLE</span>
+    <span class="nb">orr</span>     <span class="nv">r0</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="o">#</span><span class="nv">CR_I</span>       <span class="no">@</span> <span class="nv">enable</span> <span class="nv">I</span><span class="o">-</span><span class="nv">cache</span>
+<span class="cp">#endif</span>
+
+    <span class="err">@</span> <span class="nv">Set</span> <span class="nv">Domain</span> <span class="nv">Access</span> <span class="nv">Register</span><span class="err">:</span> <span class="nv">all</span> <span class="nv">domains</span> <span class="o">=</span> <span class="nv">MANAGER</span>
+    <span class="err">@</span> <span class="o">(</span><span class="nv">bypasses</span> <span class="nv">permission</span> <span class="nv">checks</span> <span class="nv">during</span> <span class="nv">initial</span> <span class="nv">boot</span><span class="o">)</span>
+    <span class="nb">mov</span>     <span class="nv">r5</span><span class="o">,</span> <span class="o">#(</span><span class="nv">domain_val</span><span class="o">(</span><span class="nv">DOMAIN_USER</span><span class="o">,</span>   <span class="nv">DOMAIN_MANAGER</span><span class="o">)</span> <span class="o">|</span> <span class="err">\</span>
+                  <span class="nf">domain_val</span><span class="err">(</span><span class="nf">DOMAIN_KERNEL</span><span class="err">,</span> <span class="nv">DOMAIN_MANAGER</span><span class="o">)</span> <span class="o">|</span> <span class="err">\</span>
+                  <span class="nf">domain_val</span><span class="err">(</span><span class="nf">DOMAIN_TABLE</span><span class="err">,</span>  <span class="nv">DOMAIN_MANAGER</span><span class="o">)</span> <span class="o">|</span> <span class="err">\</span>
+                  <span class="nf">domain_val</span><span class="err">(</span><span class="nf">DOMAIN_IO</span><span class="err">,</span>     <span class="nv">DOMAIN_CLIENT</span><span class="o">))</span>
+    <span class="nb">mcr</span>     <span class="nv">p15</span><span class="o">,</span> <span class="mi">0</span><span class="o">,</span> <span class="nv">r5</span><span class="o">,</span> <span class="nv">c3</span><span class="o">,</span> <span class="nv">c0</span><span class="o">,</span> <span class="mi">0</span>   <span class="no">@</span> <span class="nv">write</span> <span class="nv">DACR</span>
+
+    <span class="err">@</span> <span class="nv">Load</span> <span class="nv">page</span> <span class="nv">table</span> <span class="nv">base</span> <span class="nv">address</span> <span class="nv">into</span> <span class="nv">TTBR0</span>
+    <span class="nb">mcr</span>     <span class="nv">p15</span><span class="o">,</span> <span class="mi">0</span><span class="o">,</span> <span class="nv">r4</span><span class="o">,</span> <span class="nv">c2</span><span class="o">,</span> <span class="nv">c0</span><span class="o">,</span> <span class="mi">0</span>   <span class="no">@</span> <span class="nv">TTBR0</span> <span class="o">=</span> <span class="nv">swapper_pg_dir</span> <span class="nv">physical</span> <span class="nv">addr</span>
+
+    <span class="err">@</span> <span class="nv">Final</span> <span class="nv">TLB</span> <span class="nv">invalidation</span>
+    <span class="nb">mov</span>     <span class="nv">r5</span><span class="o">,</span> <span class="o">#</span><span class="mi">0</span>
+    <span class="nb">mcr</span>     <span class="nv">p15</span><span class="o">,</span> <span class="mi">0</span><span class="o">,</span> <span class="nv">r5</span><span class="o">,</span> <span class="nv">c8</span><span class="o">,</span> <span class="nv">c7</span><span class="o">,</span> <span class="mi">0</span>   <span class="no">@</span> <span class="nv">invalidate</span> <span class="nv">all</span> <span class="nv">I</span><span class="o">+</span><span class="nv">D</span> <span class="nv">TLBs</span>
+    <span class="nb">mcr</span>     <span class="nv">p15</span><span class="o">,</span> <span class="mi">0</span><span class="o">,</span> <span class="nv">r5</span><span class="o">,</span> <span class="nv">c7</span><span class="o">,</span> <span class="nv">c5</span><span class="o">,</span> <span class="mi">6</span>   <span class="no">@</span> <span class="nv">invalidate</span> <span class="nv">BTB</span>
+
+    <span class="nb">b</span>       <span class="nv">__turn_mmu_on</span>
+
+<span class="nl">__turn_mmu_on</span><span class="err">:</span>
+    <span class="nb">mov</span>     <span class="nv">r0</span><span class="o">,</span> <span class="nv">r0</span>
+    <span class="nf">instr_sync</span>                       <span class="no">@</span> <span class="nv">ISB</span> <span class="err">—</span> <span class="nv">instruction</span> <span class="nv">synchronisation</span> <span class="nv">barrier</span>
+    <span class="nb">mcr</span>     <span class="nv">p15</span><span class="o">,</span> <span class="mi">0</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="nv">c1</span><span class="o">,</span> <span class="nv">c0</span><span class="o">,</span> <span class="mi">0</span>   <span class="no">@</span> <span class="o">***</span> <span class="nv">WRITE</span> <span class="nv">SCTLR</span> <span class="err">—</span> <span class="nv">MMU</span> <span class="nv">IS</span> <span class="nv">NOW</span> <span class="nv">ON</span> <span class="o">***</span>
+    <span class="nb">mrc</span>     <span class="nv">p15</span><span class="o">,</span> <span class="mi">0</span><span class="o">,</span> <span class="nv">r3</span><span class="o">,</span> <span class="nv">c0</span><span class="o">,</span> <span class="nv">c0</span><span class="o">,</span> <span class="mi">0</span>   <span class="no">@</span> <span class="nv">read</span> <span class="nv">MIDR</span> <span class="o">(</span><span class="nv">pipeline</span> <span class="nv">flush</span> <span class="err">—</span> <span class="mi">3</span> <span class="nv">instructions</span><span class="o">)</span>
+    <span class="nb">mov</span>     <span class="nv">r3</span><span class="o">,</span> <span class="nv">r3</span>                   <span class="no">@</span> <span class="nv">nop</span>
+    <span class="nb">mov</span>     <span class="nv">r3</span><span class="o">,</span> <span class="nv">r3</span>                   <span class="no">@</span> <span class="nv">nop</span>
+    <span class="nb">mov</span>     <span class="nv">pc</span><span class="o">,</span> <span class="nv">r13</span>                  <span class="no">@</span> <span class="nv">branch</span> <span class="nv">to</span> <span class="nv">virtual</span> <span class="nv">__mmap_switched</span></code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>Dump first level pagetable:
+
+(gdb) x/240 0x40204000
+0x40204000:     0x00000c12      0x00100c12      0x00200c12      0x00300c12
+0x40204010:     0x00400c12      0x00500c12      0x00600c12      0x00700c12
+0x40204020:     0x00800c12      0x00900c12      0x00a00c12      0x00b00c12
+0x40204030:     0x00c00c12      0x00d00c12      0x00e00c12      0x00f00c12
+0x40204040:     0x01000c12      0x01100c12      0x01200c12      0x01300c12
+0x40204050:     0x01400c12      0x01500c12      0x01600c12      0x01700c12
+0x40204060:     0x01800c12      0x01900c12      0x01a00c12      0x01b00c12
+0x40204070:     0x01c00c12      0x01d00c12      0x01e00c12      0x01f00c12
+0x40204080:     0x02000c12      0x02100c12      0x02200c12      0x02300c12
+0x40204090:     0x02400c12      0x02500c12      0x02600c12      0x02700c12
+0x402040a0:     0x02800c12      0x02900c12      0x02a00c12      0x02b00c12
+0x402040b0:     0x02c00c12      0x02d00c12      0x02e00c12      0x02f00c12
+0x402040c0:     0x03000c12      0x03100c12      0x03200c12      0x03300c12
+0x402040d0:     0x03400c12      0x03500c12      0x03600c12      0x03700c12
+0x402040e0:     0x03800c12      0x03900c12      0x03a00c12      0x03b00c12
+0x402040f0:     0x03c00c12      0x03d00c12      0x03e00c12      0x03f00c12
+0x40204100:     0x04000c12      0x04100c12      0x04200c12      0x04300c12
+0x40204110:     0x04400c12      0x04500c12      0x04600c12      0x04700c12
+0x40204120:     0x04800c12      0x04900c12      0x04a00c12      0x04b00c12
+0x40204130:     0x04c00c12      0x04d00c12      0x04e00c12      0x04f00c12
+0x40204140:     0x05000c12      0x05100c12      0x05200c12      0x05300c12
+0x40204150:     0x05400c12      0x05500c12      0x05600c12      0x05700c12
+0x40204160:     0x05800c12      0x05900c12      0x05a00c12      0x05b00c12
+0x40204170:     0x05c00c12      0x05d00c12      0x05e00c12      0x05f00c12
+0x40204180:     0x06000c12      0x06100c12      0x06200c12      0x06300c12
+0x40204190:     0x06400c12      0x06500c12      0x06600c12      0x06700c12
+0x402041a0:     0x06800c12      0x06900c12      0x06a00c12      0x06b00c12
+0x402041b0:     0x06c00c12      0x06d00c12      0x06e00c12      0x06f00c12
+0x402041c0:     0x07000c12      0x07100c12      0x07200c12      0x07300c12
+0x402041d0:     0x07400c12      0x07500c12      0x07600c12      0x07700c12
+0x402041e0:     0x07800c12      0x07900c12      0x07a00c12      0x07b00c12
+0x402041f0:     0x07c00c12      0x07d00c12      0x07e00c12      0x07f00c12
+0x40204200:     0x08000c12      0x08100c12      0x08200c12      0x08300c12
+0x40204210:     0x08400c12      0x08500c12      0x08600c12      0x08700c12
+0x40204220:     0x08800c12      0x08900c12      0x08a00c12      0x08b00c12
+0x40204230:     0x08c00c12      0x08d00c12      0x08e00c12      0x08f00c12
+0x40204240:     0x09000c12      0x09100c12      0x09200c12      0x09300c12
+0x40204250:     0x09400c12      0x09500c12      0x09600c12      0x09700c12
+0x40204260:     0x09800c12      0x09900c12      0x09a00c12      0x09b00c12
+0x40204270:     0x09c00c12      0x09d00c12      0x09e00c12      0x09f00c12
+0x40204280:     0x0a000c12      0x0a100c12      0x0a200c12      0x0a300c12
+0x40204290:     0x0a400c12      0x0a500c12      0x0a600c12      0x0a700c12
+0x402042a0:     0x0a800c12      0x0a900c12      0x0aa00c12      0x0ab00c12
+0x402042b0:     0x0ac00c12      0x0ad00c12      0x0ae00c12      0x0af00c12
+0x402042c0:     0x0b000c12      0x0b100c12      0x0b200c12      0x0b300c12
+0x402042d0:     0x0b400c12      0x0b500c12      0x0b600c12      0x0b700c12
+0x402042e0:     0x0b800c12      0x0b900c12      0x0ba00c12      0x0bb00c12
+0x402042f0:     0x0bc00c12      0x0bd00c12      0x0be00c12      0x0bf00c12
+0x40204300:     0x0c000c12      0x0c100c12      0x0c200c12      0x0c300c12
+0x40204310:     0x0c400c12      0x0c500c12      0x0c600c12      0x0c700c12
+0x40204320:     0x0c800c12      0x0c900c12      0x0ca00c12      0x0cb00c12
+0x40204330:     0x0cc00c12      0x0cd00c12      0x0ce00c12      0x0cf00c12
+0x40204340:     0x0d000c12      0x0d100c12      0x0d200c12      0x0d300c12
+--Type &lt;RET&gt; for more, q to quit, c to continue without paging--
+0x40204350:     0x0d400c12      0x0d500c12      0x0d600c12      0x0d700c12
+0x40204360:     0x0d800c12      0x0d900c12      0x0da00c12      0x0db00c12
+0x40204370:     0x0dc00c12      0x0dd00c12      0x0de00c12      0x0df00c12
+0x40204380:     0x0e000c12      0x0e100c12      0x0e200c12      0x0e300c12
+0x40204390:     0x0e400c12      0x0e500c12      0x0e600c12      0x0e700c12
+0x402043a0:     0x0e800c12      0x0e900c12      0x0ea00c12      0x0eb00c12
+0x402043b0:     0x0ec00c12      0x0ed00c12      0x0ee00c12      0x0ef00c12</pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_cp15_registers_written"><a class="anchor" href="#_cp15_registers_written"></a>8.2. CP15 Registers Written</h3>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 25%;">
+<col style="width: 25%;">
+<col style="width: 50%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Register</th>
+<th class="tableblock halign-left valign-top">CP15 Address</th>
+<th class="tableblock halign-left valign-top">What is Written</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">DACR (Domain Access Control Register)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>c3, c0, 0</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">All domains set to MANAGER — bypasses permission checking during boot</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">TTBR0 (Translation Table Base Register 0)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>c2, c0, 0</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Physical address of <code>swapper_pg_dir</code> = <code>0x40204000</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">TTBCR (Translation Table Base Control Register)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>c2, c0, 2</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">TTBR0/TTBR1 split configuration (set during <code>__v7_setup</code>)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">SCTLR (System Control Register)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>c1, c0, 0</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">MMU enable (<code>M</code> bit), caches (<code>C</code>, <code>I</code> bits), branch prediction</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="sect2">
+<h3 id="_why_the_3_nops_are_critical_the_identity_mapping_bridge"><a class="anchor" href="#_why_the_3_nops_are_critical_the_identity_mapping_bridge"></a>8.3. Why the 3 NOPs Are Critical — The Identity Mapping Bridge</h3>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/ks-identity-map.png" alt="Identity map" width="700">
+</div>
+<div class="title">Figure 10. Identity mapping bridging physical execution to virtual execution</div>
+</div>
+<div class="paragraph">
+<p>When <code>mcr p15, 0, r0, c1, c0, 0</code> writes the SCTLR:</p>
+</div>
+<div class="olist arabic">
+<ol class="arabic">
+<li>
+<p>The MMU is activated <strong>instantly</strong></p>
+</li>
+<li>
+<p>But the ARM pipeline has already fetched the <strong>next</strong> few instructions
+using <strong>physical</strong> addresses</p>
+</li>
+<li>
+<p>Those physical addresses (<code>0x40208xxx</code>) must be valid virtual addresses too</p>
+</li>
+</ol>
+</div>
+<div class="paragraph">
+<p>This is exactly why <code>__create_page_tables</code> builds the identity mapping:</p>
+</div>
+<table class="tableblock frame-all grid-all" style="width: 90%;">
+<colgroup>
+<col style="width: 33.3333%;">
+<col style="width: 66.6667%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Address</th>
+<th class="tableblock halign-left valign-top">What Happens</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40208xxx</code> (the 3 NOPs)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><strong>Identity-mapped</strong>: virt <code>0x40208xxx</code> → phys <code>0x40208xxx</code>
+  → MMU translates correctly, no fault</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r13 = 0xC0208xxx</code> (__mmap_switched)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><strong>Kernel-mapped</strong>: virt <code>0xC0208xxx</code> → phys <code>0x40208xxx</code>
+  → <code>mov pc, r13</code> jumps to virtual kernel address — leaves identity region permanently</p></td>
+</tr>
+</tbody>
+</table>
+<div class="admonitionblock warning">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-warning" title="Warning"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>The identity mapping covers only one 1 MiB section (<code>0x40200000</code>–<code>0x402FFFFF</code>).
+The branch to <code>__mmap_switched</code> <strong>must</strong> happen before the CPU wanders outside
+this section.  The 3 NOPs ensure the pipeline is fully drained before <code>mov pc, r13</code>
+executes.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<hr>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_phase_6_mmap_switched_final_c_runtime_and_start_kernel"><a class="anchor" href="#_phase_6_mmap_switched_final_c_runtime_and_start_kernel"></a>9. Phase 6: __mmap_switched — Final C Runtime and start_kernel()</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>After <code>mov pc, r13</code>, the CPU is executing at a <strong>virtual</strong> address for the first
+time.  We are now in <code>arch/arm/kernel/head-common.S</code>:</p>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/ks-mmap-switched.png" alt="mmap switched" width="700">
+</div>
+<div class="title">Figure 11. Complete __mmap_switched sequence leading to start_kernel()</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm"><span class="nl">__mmap_switched</span><span class="err">:</span>
+    <span class="err">@</span> <span class="nv">At</span> <span class="nv">this</span> <span class="nv">point</span><span class="err">:</span>
+    <span class="err">@</span>   <span class="nv">MMU</span> <span class="nv">ON</span> <span class="err">—</span> <span class="nv">all</span> <span class="nv">addresses</span> <span class="nv">are</span> <span class="nv">virtual</span>
+    <span class="err">@</span>   <span class="nv">PC</span> <span class="o">=</span> <span class="mh">0xC0208</span><span class="nv">xxx</span> <span class="o">(</span><span class="nv">virtual</span><span class="o">)</span>
+    <span class="err">@</span>   <span class="nv">r0</span> <span class="o">=</span> <span class="mi">0</span><span class="o">,</span> <span class="nv">r1</span> <span class="o">=</span> <span class="nv">MachID</span><span class="o">,</span> <span class="nv">r2</span> <span class="o">=</span> <span class="nv">DTB</span> <span class="nv">physical</span> <span class="nv">addr</span><span class="o">,</span> <span class="nv">r9</span> <span class="o">=</span> <span class="nv">CPUID</span>
+
+    <span class="nb">adr</span>     <span class="nv">r3</span><span class="o">,</span> <span class="nv">__mmap_switched_data</span>  <span class="no">@</span> <span class="nv">r3</span> <span class="o">=</span> <span class="nv">physical</span> <span class="nv">addr</span> <span class="nv">of</span> <span class="nv">data</span> <span class="nv">table</span>
+
+    <span class="nb">ldmia</span>   <span class="nv">r3</span><span class="o">!,</span> <span class="o">{</span><span class="nv">r4</span><span class="o">,</span> <span class="nv">r5</span><span class="o">,</span> <span class="nv">r6</span><span class="o">,</span> <span class="nv">r7</span><span class="o">}</span>    <span class="no">@</span> <span class="nv">load</span><span class="err">:</span> <span class="nv">__data_loc</span><span class="o">,</span> <span class="nv">_sdata</span><span class="o">,</span> <span class="nv">__bss_start</span><span class="o">,</span> <span class="nv">_end</span>
+
+    <span class="err">@</span> <span class="nv">Step</span> <span class="mi">1</span><span class="err">:</span> <span class="nv">Copy</span> <span class="mf">.</span><span class="nv">data</span> <span class="nv">if</span> <span class="nv">XIP</span> <span class="nv">kernel</span> <span class="o">(</span><span class="nv">ROM</span> <span class="err">→</span> <span class="nv">RAM</span><span class="o">)</span>
+    <span class="nb">cmp</span>     <span class="nv">r4</span><span class="o">,</span> <span class="nv">r5</span>          <span class="no">@</span> <span class="nv">__data_loc</span> <span class="o">==</span> <span class="nv">_sdata</span><span class="o">?</span> <span class="o">(</span><span class="nv">no</span> <span class="nv">copy</span> <span class="nv">needed</span> <span class="nv">if</span> <span class="nv">same</span><span class="o">)</span>
+<span class="nl">1</span><span class="err">:</span>  <span class="nb">cmpne</span>   <span class="nv">r5</span><span class="o">,</span> <span class="nv">r6</span>          <span class="no">@</span> <span class="mf">.</span><span class="nv">data</span> <span class="nv">end</span> <span class="nv">reached</span><span class="o">?</span>
+    <span class="nb">ldrne</span>   <span class="nv">fp</span><span class="o">,</span> <span class="o">[</span><span class="nv">r4</span><span class="o">],</span> <span class="o">#</span><span class="mi">4</span>
+    <span class="nb">strne</span>   <span class="nv">fp</span><span class="o">,</span> <span class="o">[</span><span class="nv">r5</span><span class="o">],</span> <span class="o">#</span><span class="mi">4</span>
+    <span class="nb">bne</span>     <span class="mi">1</span><span class="nv">b</span>
+
+    <span class="err">@</span> <span class="nv">Step</span> <span class="mi">2</span><span class="err">:</span> <span class="nv">Zero</span> <span class="mf">.</span><span class="nv">bss</span> <span class="nv">segment</span>
+    <span class="nb">mov</span>     <span class="nv">fp</span><span class="o">,</span> <span class="o">#</span><span class="mi">0</span>
+<span class="nl">1</span><span class="err">:</span>  <span class="nb">cmp</span>     <span class="nv">r6</span><span class="o">,</span> <span class="nv">r7</span>
+    <span class="nb">strcc</span>   <span class="nv">fp</span><span class="o">,</span> <span class="o">[</span><span class="nv">r6</span><span class="o">],</span> <span class="o">#</span><span class="mi">4</span>    <span class="no">@</span> <span class="nv">zero</span> <span class="nv">one</span> <span class="nv">word</span>
+    <span class="nb">bcc</span>     <span class="mi">1</span><span class="nv">b</span>
+
+    <span class="err">@</span> <span class="nv">Step</span> <span class="mi">3</span><span class="err">:</span> <span class="nv">Load</span> <span class="nv">stack</span> <span class="nv">pointer</span>
+    <span class="nb">ldmia</span>   <span class="nv">r3</span><span class="o">,</span> <span class="o">{</span><span class="nv">r4</span><span class="o">,</span> <span class="nv">r5</span><span class="o">,</span> <span class="nv">r6</span><span class="o">,</span> <span class="nv">r7</span><span class="o">,</span> <span class="nv">sp</span><span class="o">}</span>
+
+    <span class="err">@</span> <span class="nv">Step</span> <span class="mi">4</span><span class="err">:</span> <span class="nv">Save</span> <span class="nv">processor</span> <span class="nv">information</span> <span class="nv">for</span> <span class="nv">setup_arch</span><span class="o">()</span>
+    <span class="nb">str</span>     <span class="nv">r9</span><span class="o">,</span> <span class="o">[</span><span class="nv">r4</span><span class="o">]</span>        <span class="no">@</span> <span class="nv">processor_id</span> <span class="o">=</span> <span class="nv">CPUID</span>
+    <span class="nb">str</span>     <span class="nv">r1</span><span class="o">,</span> <span class="o">[</span><span class="nv">r5</span><span class="o">]</span>        <span class="no">@</span> <span class="nv">__machine_arch_type</span> <span class="o">=</span> <span class="nv">MachID</span>
+    <span class="nb">str</span>     <span class="nv">r2</span><span class="o">,</span> <span class="o">[</span><span class="nv">r6</span><span class="o">]</span>        <span class="no">@</span> <span class="nv">__atags_pointer</span> <span class="o">=</span> <span class="nv">DTB</span> <span class="nv">phys</span> <span class="nv">addr</span>
+    <span class="nb">cmp</span>     <span class="nv">r7</span><span class="o">,</span> <span class="o">#</span><span class="mi">0</span>          <span class="no">@</span> <span class="nv">any</span> <span class="nv">further</span> <span class="nv">fixups</span><span class="o">?</span>
+    <span class="nb">bicne</span>   <span class="nv">ip</span><span class="o">,</span> <span class="nv">ip</span><span class="o">,</span> <span class="o">#</span><span class="nv">PSR_ENDIAN_SET</span>
+    <span class="nb">mcrne</span>   <span class="nv">p15</span><span class="o">,</span> <span class="mi">0</span><span class="o">,</span> <span class="nv">ip</span><span class="o">,</span> <span class="nv">c1</span><span class="o">,</span> <span class="nv">c0</span><span class="o">,</span> <span class="mi">0</span>  <span class="no">@</span> <span class="nv">set</span> <span class="nv">endianness</span> <span class="nv">if</span> <span class="nv">needed</span>
+
+    <span class="err">@</span> <span class="nv">Step</span> <span class="mi">5</span><span class="err">:</span> <span class="nv">Branch</span> <span class="nv">to</span> <span class="nv">start_kernel</span><span class="o">()</span> <span class="err">—</span> <span class="nv">NEVER</span> <span class="nv">RETURNS</span>
+    <span class="nb">b</span>       <span class="nv">start_kernel</span></code></pre>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_data_table_mmap_switched_data"><a class="anchor" href="#_data_table_mmap_switched_data"></a>9.1. Data Table __mmap_switched_data</h3>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm">    <span class="err">.</span><span class="nb">align</span>  <span class="mi">2</span>
+    <span class="err">.</span><span class="nb">type</span>   <span class="nv">__mmap_switched_data</span><span class="o">,</span> <span class="o">%</span><span class="nv">object</span>
+<span class="nl">__mmap_switched_data</span><span class="err">:</span>
+    <span class="err">.</span><span class="nb">long</span>   <span class="nv">__data_loc</span>      <span class="no">@</span> <span class="nv">source</span> <span class="nv">of</span> <span class="mf">.</span><span class="nv">data</span> <span class="o">(</span><span class="nv">ROM</span> <span class="nv">for</span> <span class="nv">XIP</span><span class="o">,</span> <span class="nv">same</span> <span class="nv">as</span> <span class="nv">_sdata</span> <span class="nv">otherwise</span><span class="o">)</span>
+    <span class="err">.</span><span class="nb">long</span>   <span class="nv">_sdata</span>          <span class="no">@</span> <span class="nv">virtual</span> <span class="nv">start</span> <span class="nv">of</span> <span class="mf">.</span><span class="nv">data</span>
+    <span class="err">.</span><span class="nb">long</span>   <span class="nv">__bss_start</span>     <span class="no">@</span> <span class="nv">start</span> <span class="nv">of</span> <span class="mf">.</span><span class="nv">bss</span>
+    <span class="err">.</span><span class="nb">long</span>   <span class="nv">_end</span>            <span class="no">@</span> <span class="nv">end</span> <span class="nv">of</span> <span class="mf">.</span><span class="nv">bss</span>
+    <span class="err">.</span><span class="nb">long</span>   <span class="nv">processor_id</span>    <span class="no">@</span> <span class="o">&amp;</span><span class="nv">processor_id</span> <span class="nv">global</span> <span class="nv">variable</span>
+    <span class="err">.</span><span class="nb">long</span>   <span class="nv">__machine_arch_type</span>  <span class="no">@</span> <span class="o">&amp;</span><span class="nv">__machine_arch_type</span>
+    <span class="err">.</span><span class="nb">long</span>   <span class="nv">__atags_pointer</span> <span class="no">@</span> <span class="o">&amp;</span><span class="nv">__atags_pointer</span> <span class="o">(</span><span class="nv">DTB</span> <span class="nv">physical</span> <span class="nv">addr</span><span class="o">)</span>
+    <span class="err">.</span><span class="nb">long</span>   <span class="nv">cr_alignment</span>    <span class="no">@</span> <span class="mh">&amp;c</span><span class="nv">r_alignment</span>
+    <span class="err">.</span><span class="nb">long</span>   <span class="nv">init_thread_union</span> <span class="o">+</span> <span class="nv">THREAD_SIZE</span>  <span class="no">@</span> <span class="nv">initial</span> <span class="nv">kernel</span> <span class="nv">stack</span> <span class="nv">pointer</span></code></pre>
+</div>
+</div>
+<table class="tableblock frame-all grid-all" style="width: 90%;">
+<colgroup>
+<col style="width: 40%;">
+<col style="width: 60%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Symbol</th>
+<th class="tableblock halign-left valign-top">Content after __mmap_switched</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>processor_id</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">CPUID from <code>CP15 c0</code> (e.g. <code>0x410FC0F2</code> for Cortex-A15)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>__machine_arch_type</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Machine ID from <code>r1</code> (or <code>0xFFFFFFFF</code> for DT boots)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>__atags_pointer</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Physical address of DTB (<code>0x48000000</code>)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>sp</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>init_thread_union + THREAD_SIZE</code> = top of init task&#8217;s 8 KiB stack</p></td>
+</tr>
+</tbody>
+</table>
+<hr>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_virtual_memory_layout_after_mmu_on"><a class="anchor" href="#_virtual_memory_layout_after_mmu_on"></a>10. Virtual Memory Layout After MMU On</h2>
+<div class="sectionbody">
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/ks-virt-memory-map.png" alt="Virtual memory map" width="700">
+</div>
+<div class="title">Figure 12. Complete virtual address space layout after the MMU is activated</div>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 28.5714%;">
+<col style="width: 28.5714%;">
+<col style="width: 42.8572%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Virtual Address</th>
+<th class="tableblock halign-left valign-top">Region</th>
+<th class="tableblock halign-left valign-top">Contents / Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x00000000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Userspace base</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">NULL pointer trap — first 16 KiB causes a fault on access</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x00004000</code>–<code>0xBFFFFFFF</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Userspace (3 GiB)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Per-process virtual memory — fully isolated between processes</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0xC0000000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>PAGE_OFFSET</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Kernel space starts here — always mapped, always present</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0xC0204000</code>–<code>0xC0207FFF</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>swapper_pg_dir</code> (16 KiB)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Initial page table — written during <code>__create_page_tables</code>,
+  abandoned after <code>paging_init()</code> rebuilds the full tables</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0xC0208000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>stext</code> / <code>_text</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">First kernel instruction — <code>PAGE_OFFSET + TEXT_OFFSET</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0xC0208000</code>–<code>end</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Kernel image</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>.head.text</code>, <code>.text</code>, <code>.init.*</code>, <code>.data</code>, <code>.bss</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>vmalloc</code> region</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">above kernel image</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Dynamic kernel memory mappings (modules, ioremap, etc.)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0xFFFF0000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">High vectors</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">ARM exception vectors (on ARMv6+ with <code>HIVECS</code> enabled in SCTLR)</p></td>
+</tr>
+</tbody>
+</table>
+<div class="sect2">
+<h3 id="_physical_virtual_translation_after_boot"><a class="anchor" href="#_physical_virtual_translation_after_boot"></a>10.1. Physical ↔ Virtual Translation After Boot</h3>
+<div class="paragraph">
+<p>After P2V patching, every address conversion in the kernel uses:</p>
+</div>
+<table class="tableblock frame-all grid-all" style="width: 90%;">
+<colgroup>
+<col style="width: 28.5714%;">
+<col style="width: 42.8571%;">
+<col style="width: 28.5715%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Direction</th>
+<th class="tableblock halign-left valign-top">Formula</th>
+<th class="tableblock halign-left valign-top">Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Physical → Virtual</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>virt = phys − PHYS_OFFSET + PAGE_OFFSET</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40208000 − 0x40000000 + 0xC0000000 = 0xC0208000</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Virtual → Physical</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>phys = virt − PAGE_OFFSET + PHYS_OFFSET</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0xC0208000 − 0xC0000000 + 0x40000000 = 0x40208000</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Shorthand</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>virt = phys + 0x80000000</code> (our session)</p></td>
+<td class="tableblock halign-left valign-top"></td>
+</tr>
+</tbody>
+</table>
+<hr>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_what_happens_in_start_kernel"><a class="anchor" href="#_what_happens_in_start_kernel"></a>11. What Happens in start_kernel()</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p><code>start_kernel()</code> in <code>init/main.c</code> is the first C function.  It inherits the
+sparse initial page table.  Its first job is to replace it:</p>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/ks-start-kernel.png" alt="start_kernel overview" width="700">
+</div>
+<div class="title">Figure 13. start_kernel() overview</div>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 33.3333%;">
+<col style="width: 66.6667%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Function Call</th>
+<th class="tableblock halign-left valign-top">Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>setup_arch(&amp;cmd_line)</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Architecture setup — calls <code>paging_init()</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>paging_init()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Rebuilds <strong>all</strong> page tables — discards <code>swapper_pg_dir</code> mappings</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>setup_per_cpu_areas()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Allocate per-CPU data</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>build_all_zonelists()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Set up memory zones (ZONE_DMA, ZONE_NORMAL, etc.)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>trap_init()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Install final exception vector table</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>mm_init()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Initialize memory allocator</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>sched_init()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Initialize the process scheduler</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>init_IRQ()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Set up IRQ controllers</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>time_init()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Initialize system timers</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>rest_init()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Launch kernel thread PID 1 (<code>/init</code>)</p></td>
+</tr>
+</tbody>
+</table>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>Once <code>paging_init()</code> runs, the identity mapping (<code>0x40200000</code> → <code>0x40200000</code>)
+and the initial <code>swapper_pg_dir</code> entries are <strong>completely replaced</strong> by a full
+fine-grained page table covering all of physical RAM.  The 1 MiB section
+descriptors we built in <code>__create_page_tables</code> are gone, replaced by 4 KiB
+page mappings with proper access permissions and memory attributes.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<hr>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_debugging_the_kernel_startup_with_gdb"><a class="anchor" href="#_debugging_the_kernel_startup_with_gdb"></a>12. Debugging the Kernel Startup with GDB</h2>
+<div class="sectionbody">
+<div class="sect2">
+<h3 id="_loading_vmlinux_symbols"><a class="anchor" href="#_loading_vmlinux_symbols"></a>12.1. Loading vmlinux Symbols</h3>
+<div class="paragraph">
+<p>To trace from <code>stext</code> onwards, load the uncompressed <code>vmlinux</code> at <code>TEXT_OFFSET</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code>(gdb) target remote :1234
+(gdb) add-symbol-file arch/arm/boot/compressed/vmlinux 0x40010000
+(gdb) add-symbol-file vmlinux 0x40208000
+(gdb) hbreak stext
+(gdb) continue</code></pre>
+</div>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/gdb-vmlinux-symbols.png" alt="GDB vmlinux symbols" width="640">
+</div>
+<div class="title">Figure 14. GDB with vmlinux symbols loaded — stext and surrounding functions visible</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_key_breakpoints_for_head_s_tracing"><a class="anchor" href="#_key_breakpoints_for_head_s_tracing"></a>12.2. Key Breakpoints for head.S Tracing</h3>
+<table class="tableblock frame-all grid-all" style="width: 90%;">
+<colgroup>
+<col style="width: 33.3333%;">
+<col style="width: 66.6667%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Breakpoint</th>
+<th class="tableblock halign-left valign-top">What to Inspect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>break stext</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Entry state: <code>r0=0, r1=MachID, r2=DTB, pc=0x40208000</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>break __lookup_processor_type</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">CPU identification — <code>r9</code> = CPUID</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>break __create_page_tables</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Before: all zero; After: inspect <code>x/16wx 0x40204000</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>break __enable_mmu</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r4</code> = <code>swapper_pg_dir</code> addr, <code>r13</code> = <code>__mmap_switched</code> virt</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>break __turn_mmu_on</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Last instruction before MMU on — single-step carefully</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>break __mmap_switched</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">First virtual-mode instruction — <code>sp</code> now set</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>break start_kernel</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">First C code — <code>backtrace</code> should show only <code>start_kernel</code></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="sect2">
+<h3 id="_inspecting_the_page_table"><a class="anchor" href="#_inspecting_the_page_table"></a>12.3. Inspecting the Page Table</h3>
+<div class="paragraph">
+<p>After <code>__create_page_tables</code> completes, inspect <code>swapper_pg_dir</code> directly:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code>(gdb) x/16wx 0x40204000          @ first 16 entries (0x00000000–0x0FFFFFFF virtual)
+0x40204000: 0x00000000  0x00000000  ...    @ all zero (unmapped)
+
+(gdb) x/wx 0x40204000 + 4*(0x402&gt;&gt;1)    @ entry for identity 0x40200000
+0x40205008: 0x40200c1e   @ phys base 0x402, type=section(0b10), C=1,B=1,AP=11
+
+(gdb) x/wx 0x40204000 + 4*(0xC02&gt;&gt;1)    @ entry for kernel 0xC0200000
+(gdb) @ calculate: (0xC0200000 &gt;&gt; 20) * 4 = 0xC02 * 4 / 0x100 = offset into PGD</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Decoding a section descriptor entry <code>0x40200c1e</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code>0x40200c1e = 0100 0000 0010 0000 0000 1100 0001 1110
+             ↑                   ↑    ↑         ↑  ↑
+             [31:20]=0x402   [11:10]=AP=11 [C=1][B=1] [1:0]=0b10=Section</code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_vmlinux_disassembly"><a class="anchor" href="#_vmlinux_disassembly"></a>12.4. vmlinux Disassembly</h3>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/vmlinux-disassembly.png" alt="vmlinux disassembly" width="640">
+</div>
+<div class="title">Figure 15. vmlinux disassembly showing head.S startup sequence from stext</div>
+</div>
+<div class="paragraph">
+<p>This snapshot shows the actual ARM instructions in the <code>stext</code> and nearby
+functions as seen by <code>objdump</code>, confirming the assembly sequences described
+in this document.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_vmlinux_section_headers"><a class="anchor" href="#_vmlinux_section_headers"></a>12.5. vmlinux Section Headers</h3>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/vmlinux-sections.png" alt="vmlinux sections" width="640">
+</div>
+<div class="title">Figure 16. vmlinux ELF section headers showing .head.text, .text, .init.* layout</div>
+</div>
+<div class="paragraph">
+<p>The <code>.head.text</code> section always appears first — this is enforced by the linker
+script (<code>arch/arm/kernel/vmlinux.lds.S</code>) using <code>FIRST_LOADABLE_SEGMENT</code>.
+<code>stext</code> is the first symbol in <code>.head.text</code>.</p>
+</div>
+<hr>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_summary_key_addresses_and_symbols"><a class="anchor" href="#_summary_key_addresses_and_symbols"></a>13. Summary: Key Addresses and Symbols</h2>
+<div class="sectionbody">
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 30%;">
+<col style="width: 20%;">
+<col style="width: 10%;">
+<col style="width: 40%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Symbol</th>
+<th class="tableblock halign-left valign-top">Address</th>
+<th class="tableblock halign-left valign-top">Space</th>
+<th class="tableblock halign-left valign-top">Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>stext</code> (physical)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40208000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Physical</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Entry point from decompressor</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>stext</code> (virtual)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0xC0208000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Virtual</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Linked address — active after MMU on</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>PAGE_OFFSET</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0xC0000000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Virtual</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Kernel/user split boundary</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>PHYS_OFFSET</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40000000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Physical</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Physical RAM base (computed at runtime)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>TEXT_OFFSET</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x208000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">—</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Gap between RAM base and <code>stext</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>swapper_pg_dir</code> (phys)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40204000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Physical</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Written by <code>__create_page_tables</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>swapper_pg_dir</code> (virt)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0xC0204000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Virtual</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Accessible after MMU on</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>PG_DIR_SIZE</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x4000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">—</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">16 KiB — classic MMU; <code>0x5000</code> for LPAE</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>__turn_mmu_on</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40208xxx</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Physical</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Identity-mapped — safe post-MMU</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>__mmap_switched</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0xC0208xxx</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Virtual</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">First virtual-mode code</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>DTB</code> (phys)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x48000000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Physical</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Passed in <code>r2</code>, mapped by page table</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">P2V delta</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x80000000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">—</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>PHYS_OFFSET − PAGE_OFFSET</code> for this session</p></td>
+</tr>
+</tbody>
+</table>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 11.1111%;">
+<col style="width: 22.2222%;">
+<col style="width: 44.4444%;">
+<col style="width: 22.2223%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Phase</th>
+<th class="tableblock halign-left valign-top">Symbol</th>
+<th class="tableblock halign-left valign-top">Action</th>
+<th class="tableblock halign-left valign-top">Key Registers</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>stext</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Entry, CPU detection, <code>__lookup_processor_type</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r9=CPUID, r10=proc_info</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">2</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>__fixup_pv_table</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Compute <code>PHYS_OFFSET</code>, patch all P2V ADD/SUB immediates</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r4=delta, r8=PHYS_OFFSET</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">3</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>__create_page_tables</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Build <code>swapper_pg_dir</code>: zero, map kernel + identity + DTB</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r4=swapper_pg_dir</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">4</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>__v7_setup</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Flush caches+TLBs, configure TTBCR, prepare SCTLR value</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r0=SCTLR value</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">5</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>__enable_mmu</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Write DACR, TTBR0; final TLB flush; call <code>__turn_mmu_on</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r4=TTBR0</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">6</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>__turn_mmu_on</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Write SCTLR (MMU ON); 3 NOPs; <code>mov pc, r13</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>pc→0xC02xxxxx</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">7</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>__mmap_switched</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Set stack, clear BSS, save IDs, <code>b start_kernel</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>sp=init stack</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">8</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>start_kernel()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>paging_init()</code> rebuilds tables; full kernel init</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">— (C code)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+<div id="footer">
+<div id="footer-text">
+Last updated 2026-03-22 10:38:55 -0400
+</div>
+</div>
+</body>
+</html>

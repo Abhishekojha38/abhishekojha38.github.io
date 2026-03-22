@@ -1,0 +1,2167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="generator" content="Asciidoctor 2.0.26">
+<title>ARM32 Linux Boot Process: A Technical Deep-Dive</title>
+<link rel="stylesheet" href="../assets/apple-theme.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+<link rel="stylesheet" href="../assets/rouge-base16.dark.css">
+</head>
+<nav class="apple-nav"><a href="../index.html"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>Home</a><span class="sep">›</span><span class="current">Part1: Understanding-linux-boot-process</span></nav>
+<body class="article toc2 toc-left">
+<div id="header">
+<h1>ARM32 Linux Boot Process: A Technical Deep-Dive</h1>
+<div id="toc" class="toc2">
+<div id="toctitle">Table of Contents</div>
+<ul class="sectlevel1">
+<li><a href="#_overview">1. Overview</a>
+<ul class="sectlevel2">
+<li><a href="#_why_compressed_kernels">1.1. Why Compressed Kernels?</a></li>
+<li><a href="#_complete_boot_flow_at_a_glance">1.2. Complete Boot Flow at a Glance</a></li>
+</ul>
+</li>
+<li><a href="#_zimage_build_pipeline">2. zImage Build Pipeline</a>
+<ul class="sectlevel2">
+<li><a href="#_build_artefacts">2.1. Build Artefacts</a></li>
+<li><a href="#_step_by_step_build_commands">2.2. Step-by-Step Build Commands</a>
+<ul class="sectlevel3">
+<li><a href="#_step_1_generate_image_raw_binary">2.2.1. Step 1 — Generate <code>Image</code> (raw binary)</a></li>
+<li><a href="#_step_2_compress_to_piggy_gzip">2.2.2. Step 2 — Compress to <code>piggy.gzip</code></a></li>
+<li><a href="#_step_3_wrap_as_piggy_gzip_o">2.2.3. Step 3 — Wrap as <code>piggy.gzip.o</code></a></li>
+<li><a href="#_step_4_link_compressedvmlinux">2.2.4. Step 4 — Link <code>compressed/vmlinux</code></a></li>
+<li><a href="#_step_5_extract_zimage">2.2.5. Step 5 — Extract <code>zImage</code></a></li>
+</ul>
+</li>
+<li><a href="#_zimage_internal_section_layout">2.3. zImage Internal Section Layout</a></li>
+</ul>
+</li>
+<li><a href="#_bootloader_handover">3. Bootloader Handover</a>
+<ul class="sectlevel2">
+<li><a href="#_bootloader_register_abi">3.1. Bootloader Register ABI</a></li>
+<li><a href="#_initial_ram_layout">3.2. Initial RAM Layout</a></li>
+<li><a href="#_launching_qemu_with_gdb">3.3. Launching QEMU with GDB</a></li>
+</ul>
+</li>
+<li><a href="#_head_s_execution_phase_by_phase">4. head.S Execution — Phase by Phase</a>
+<ul class="sectlevel2">
+<li><a href="#_nop_sled_and_magic_words">4.1. NOP Sled and Magic Words</a></li>
+<li><a href="#_saving_atags_dtb_pointer_and_architecture_id">4.2. Saving ATAGS / DTB Pointer and Architecture ID</a></li>
+<li><a href="#_entering_svc_mode_and_disabling_irqfiq">4.3. Entering SVC Mode and Disabling IRQ/FIQ</a></li>
+<li><a href="#_locating_physical_memory_base_auto_zreladdr">4.4. Locating Physical Memory Base (AUTO_ZRELADDR)</a></li>
+<li><a href="#_computing_the_final_kernel_load_address_zreladdr">4.5. Computing the Final Kernel Load Address (ZRELADDR)</a></li>
+<li><a href="#_setting_up_the_page_table_and_enabling_caches">4.6. Setting Up the Page Table and Enabling Caches</a></li>
+<li><a href="#_setting_up_stack_and_malloc_area_restart_label">4.7. Setting Up Stack and Malloc Area (restart: label)</a>
+<ul class="sectlevel3">
+<li><a href="#_position_independent_stack_calculation_lc1">4.7.1. Position-Independent Stack Calculation (LC1)</a></li>
+<li><a href="#_stack_address_calculation_proof">4.7.2. Stack Address Calculation Proof</a></li>
+<li><a href="#_malloc_area">4.7.3. Malloc Area</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><a href="#_overwrite_safety_analysis">5. Overwrite Safety Analysis</a>
+<ul class="sectlevel2">
+<li><a href="#_the_problem">5.1. The Problem</a></li>
+<li><a href="#_check_a_is_the_kernel_destination_above_the_decompressor">5.2. Check A — Is the Kernel Destination Above the Decompressor?</a></li>
+<li><a href="#_check_b_does_the_decompressed_kernel_fit_below_the_decompressor">5.3. Check B — Does the Decompressed Kernel Fit Below the Decompressor?</a></li>
+<li><a href="#_overlap_extent_summary">5.4. Overlap Extent Summary</a></li>
+<li><a href="#_decision_flowchart">5.5. Decision Flowchart</a></li>
+<li><a href="#_complete_address_reference_table">5.6. Complete Address Reference Table</a></li>
+</ul>
+</li>
+<li><a href="#_self_relocation">6. Self-Relocation</a>
+<ul class="sectlevel2">
+<li><a href="#_computing_the_relocation_destination">6.1. Computing the Relocation Destination</a></li>
+<li><a href="#_why_copy_backwards">6.2. Why Copy Backwards?</a></li>
+<li><a href="#_jumping_to_relocated_code">6.3. Jumping to Relocated Code</a></li>
+</ul>
+</li>
+<li><a href="#_wont_overwrite_got_fixup_bss_clear_and_decompression">7. wont_overwrite: — GOT Fixup, BSS Clear, and Decompression</a>
+<ul class="sectlevel2">
+<li><a href="#_checking_the_relocation_delta">7.1. Checking the Relocation Delta</a></li>
+<li><a href="#_got_fixup">7.2. GOT Fixup</a></li>
+<li><a href="#_bss_clear">7.3. BSS Clear</a></li>
+<li><a href="#_calling_decompress_kernel">7.4. Calling decompress_kernel()</a></li>
+</ul>
+</li>
+<li><a href="#enter_kernel">8. Cache Flush, Cache Off, and __enter_kernel</a>
+<ul class="sectlevel2">
+<li><a href="#_flush_and_turn_off_caches">8.1. Flush and Turn Off Caches</a></li>
+<li><a href="#_enter_kernel_final_register_restore_and_jump">8.2. __enter_kernel — Final Register Restore and Jump</a></li>
+<li><a href="#_final_memory_state_at_stext">8.3. Final Memory State at stext</a></li>
+<li><a href="#_what_happens_in_vmlinux_stext">8.4. What Happens in vmlinux (stext)</a></li>
+<li><a href="#_vmlinux_symbols_in_gdb">8.5. vmlinux Symbols in GDB</a></li>
+</ul>
+</li>
+<li><a href="#_debugging_techniques">9. Debugging Techniques</a>
+<ul class="sectlevel2">
+<li><a href="#_qemu_gdb_setup">9.1. QEMU + GDB Setup</a></li>
+<li><a href="#_config_debug_uncompress">9.2. CONFIG_DEBUG_UNCOMPRESS</a></li>
+<li><a href="#_enabling_ddebug_in_head_s">9.3. Enabling -DDEBUG in head.S</a></li>
+<li><a href="#_useful_gdb_commands">9.4. Useful GDB Commands</a></li>
+</ul>
+</li>
+<li><a href="#_summary_complete_boot_phase_reference">10. Summary: Complete Boot Phase Reference</a></li>
+</ul>
+</div>
+</div>
+<div id="content">
+<div id="preamble">
+<div class="sectionbody">
+<div class="paragraph lead">
+<p>This document is a complete technical reference for the ARM32 Linux compressed kernel
+boot sequence.  It covers every step from the build system producing the <code>zImage</code>
+artifact, through the self-decompressing bootstrap loader in <code>head.S</code>, to the final
+handoff to <code>stext</code> in the uncompressed <code>vmlinux</code>.</p>
+</div>
+<div class="paragraph">
+<p>All addresses and register values shown are real values captured from a live GDB
+session on a QEMU ARM (Cortexa15) machine built with a Yocto Poky toolchain
+(linux-playground 6.12.56).</p>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p><strong>Reference</strong>: <a href="https://people.kernel.org/linusw/how-the-arm32-linux-kernel-decompresses">How the ARM32 Linux kernel decompresses</a> — Linus Walleij&#8217;s article provided the
+architectural context for this document.</p>
+</div>
+<div class="paragraph">
+<p><strong>Source repository</strong>: <a href="https://github.com/Abhishekojha38/yocto-playground.git">yocto-playground</a></p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<hr>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_overview"><a class="anchor" href="#_overview"></a>1. Overview</h2>
+<div class="sectionbody">
+<div class="sect2">
+<h3 id="_why_compressed_kernels"><a class="anchor" href="#_why_compressed_kernels"></a>1.1. Why Compressed Kernels?</h3>
+<div class="paragraph">
+<p>ARM traditionally ships compressed kernels for two important reasons:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><strong>Storage savings</strong>: <code>vmlinux</code> is ~11-12 MB; <code>zImage</code> is ~4-5 MB.  That is a saving
+of over 50%.  Flash memory is expensive on embedded SoCs and every byte matters.</p>
+</li>
+<li>
+<p><strong>Faster load time</strong>: the time the CPU spends decompressing is shorter than the time
+required to transfer the extra 6-7 MB from slow NAND flash or eMMC.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>The trade-off is added complexity: the kernel image must bootstrap a mini-decompressor
+before any real kernel code runs.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_complete_boot_flow_at_a_glance"><a class="anchor" href="#_complete_boot_flow_at_a_glance"></a>1.2. Complete Boot Flow at a Glance</h3>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/diag-boot-overview.png" alt="Boot overview" width="740">
+</div>
+<div class="title">Figure 1. Complete ARM32 compressed kernel boot flow — all 8 phases</div>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 12.5%;">
+<col style="width: 37.5%;">
+<col style="width: 50%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Phase</th>
+<th class="tableblock halign-left valign-top">Code Location</th>
+<th class="tableblock halign-left valign-top">Key Action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Bootloader (U-Boot / EFI)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Load <code>zImage</code>, set <code>r0/r1/r2</code>, jump to entry</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">2</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>head.S start:</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">NOP sled, save ATAGS, enter SVC mode</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">3</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>head.S</code> — <code>AUTO_ZRELADDR</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Locate RAM base, compute <code>ZRELADDR (r4)</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">4</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>head.S restart:</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Set up stack (<code>sp</code>), malloc (<code>r10</code>), get image size (<code>r9</code>)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">5</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>head.S</code> — overwrite checks</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Check A + B both fail → must relocate</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">6</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>head.S</code> — relocation</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Copy decompressor backwards above kernel destination</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">7</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>head.S wont_overwrite:</code> + <code>misc.c</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">GOT fixup, BSS clear, <code>decompress_kernel()</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">8</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>head.S __enter_kernel</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Cache off, restore <code>r0/r1/r2</code>, <code>mov pc, r4</code> → <code>stext</code></p></td>
+</tr>
+</tbody>
+</table>
+<hr>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_zimage_build_pipeline"><a class="anchor" href="#_zimage_build_pipeline"></a>2. zImage Build Pipeline</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Before examining runtime behaviour it is essential to understand what the build system
+assembles.  Running <code>make ARCH=arm zImage</code> triggers the following chain of
+transformations.</p>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/diag-build-pipeline.png" alt="Build pipeline" width="640">
+</div>
+<div class="title">Figure 2. Build pipeline: vmlinux → Image → piggy.gzip → zImage</div>
+</div>
+<div class="sect2">
+<h3 id="_build_artefacts"><a class="anchor" href="#_build_artefacts"></a>2.1. Build Artefacts</h3>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 22.2222%;">
+<col style="width: 44.4444%;">
+<col style="width: 33.3334%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">File</th>
+<th class="tableblock halign-left valign-top">Description</th>
+<th class="tableblock halign-left valign-top">Path</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>vmlinux</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Original ELF kernel — all symbols, uncompressed (~11 MB).</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>./vmlinux</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>System.map</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Symbol→address lookup table used for debugging.</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>./System.map</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>Image</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Raw binary extracted from <code>vmlinux</code> by <code>objcopy</code>.
+  Strips the ELF header, <code>.comment</code> section, and debug symbols.</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>./arch/arm/boot/Image</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>head.o</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">ARM assembly startup code — takes control from the bootloader.
+  Source: <code>arch/arm/boot/compressed/head.S</code>.</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>compressed/head.o</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>piggy.gzip</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>gzip -9</code> compressed <code>Image</code> payload (~4.8 MB).</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>compressed/piggy.gzip</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>piggy.gzip.o</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Linkable wrapper around <code>piggy.gzip</code>.
+  <code>piggy.gzip.S</code> uses <code>.incbin</code> to embed it between
+  <code>input_data</code> and <code>input_data_end</code> labels.</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>compressed/piggy.gzip.o</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>misc.o</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">C decompression glue — provides <code>decompress_kernel()</code>.</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>compressed/misc.c</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>compressed/vmlinux</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Linked ELF: <code>head.o + misc.o + piggy.gzip.o</code>.
+  This is the <strong>bootstrap loader</strong>, NOT the real kernel.</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>compressed/vmlinux</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>zImage</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Final <code>objcopy -O binary</code> of <code>compressed/vmlinux</code>.
+  This is what the bootloader loads into RAM.</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>./arch/arm/boot/zImage</code></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="sect2">
+<h3 id="_step_by_step_build_commands"><a class="anchor" href="#_step_by_step_build_commands"></a>2.2. Step-by-Step Build Commands</h3>
+<div class="sect3">
+<h4 id="_step_1_generate_image_raw_binary"><a class="anchor" href="#_step_1_generate_image_raw_binary"></a>2.2.1. Step 1 — Generate <code>Image</code> (raw binary)</h4>
+<div class="paragraph">
+<p><code>objcopy</code> extracts loadable sections and writes a flat binary:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">arm-poky-linux-gnueabi-objcopy <span class="se">\</span>
+    <span class="nt">-O</span> binary       <span class="se">\ </span> <span class="c"># output format: flat binary</span>
+    <span class="nt">-R</span> .comment     <span class="se">\ </span> <span class="c"># remove .comment section</span>
+    <span class="nt">-S</span>              <span class="se">\ </span> <span class="c"># strip all debug symbols</span>
+    vmlinux Image</code></pre>
+</div>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_step_2_compress_to_piggy_gzip"><a class="anchor" href="#_step_2_compress_to_piggy_gzip"></a>2.2.2. Step 2 — Compress to <code>piggy.gzip</code></h4>
+<div class="paragraph">
+<p>The raw <code>Image</code> is piped through <code>gzip</code> with maximum compression.
+If gzip fails the output file is deleted atomically to avoid leaving a corrupt artefact:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash"><span class="o">(</span><span class="nb">cat </span>Image | <span class="nb">gzip</span> <span class="nt">-n</span> <span class="nt">-f</span> <span class="nt">-9</span> <span class="o">&gt;</span> <span class="nb">arch</span>/arm/boot/compressed/piggy.gzip<span class="o">)</span> <span class="se">\</span>
+    <span class="o">||</span> <span class="o">(</span><span class="nb">rm</span> <span class="nt">-f</span> <span class="nb">arch</span>/arm/boot/compressed/piggy.gzip<span class="p">;</span> <span class="nb">false</span><span class="o">)</span></code></pre>
+</div>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_step_3_wrap_as_piggy_gzip_o"><a class="anchor" href="#_step_3_wrap_as_piggy_gzip_o"></a>2.2.3. Step 3 — Wrap as <code>piggy.gzip.o</code></h4>
+<div class="paragraph">
+<p><code>piggy.gzip.S</code> uses the <code>.incbin</code> assembler directive to embed <code>piggy.gzip</code> between
+two labels that <code>head.S</code> uses as boundaries at runtime:</p>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/piggy-linker-script.png" alt="Piggy linker script" width="560">
+</div>
+<div class="title">Figure 3. piggy.gzip.S showing input_data / input_data_end boundaries</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">arm-poky-linux-gnueabi-gcc <span class="se">\</span>
+    <span class="nt">-DZIMAGE</span> <span class="nt">-c</span>             <span class="se">\</span>
+    <span class="nt">-o</span> compressed/piggy.gzip.o <span class="se">\</span>
+    <span class="nb">arch</span>/arm/boot/compressed/piggy.S</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The name "piggy" (as in "piggyback") describes its role: carrying the compressed
+kernel payload on the back of the bootstrap loader.</p>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_step_4_link_compressedvmlinux"><a class="anchor" href="#_step_4_link_compressedvmlinux"></a>2.2.4. Step 4 — Link <code>compressed/vmlinux</code></h4>
+<div class="paragraph">
+<p>The linker combines <code>head.o</code>, <code>misc.o</code>, and <code>piggy.gzip.o</code> using <code>vmlinux.lds</code>.
+The result is <strong>not</strong> the real kernel — it is the self-decompressing bootstrap ELF.</p>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_step_5_extract_zimage"><a class="anchor" href="#_step_5_extract_zimage"></a>2.2.5. Step 5 — Extract <code>zImage</code></h4>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">arm-poky-linux-gnueabi-objcopy <span class="se">\</span>
+    <span class="nt">-O</span> binary compressed/vmlinux <span class="nb">arch</span>/arm/boot/zImage</code></pre>
+</div>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_zimage_internal_section_layout"><a class="anchor" href="#_zimage_internal_section_layout"></a>2.3. zImage Internal Section Layout</h3>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/diag-zimage-sections.png" alt="zImage sections" width="620">
+</div>
+<div class="title">Figure 4. zImage section layout when loaded at 0x40010000</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">arm-poky-linux-gnueabi-readelf <span class="nt">-S</span> <span class="nb">arch</span>/arm/boot/compressed/vmlinux</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Relevant sections and their runtime addresses (base = <code>0x40010000</code>):</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 22.2222%;">
+<col style="width: 22.2222%;">
+<col style="width: 11.1111%;">
+<col style="width: 44.4445%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Section</th>
+<th class="tableblock halign-left valign-top">Runtime Address</th>
+<th class="tableblock halign-left valign-top">Size</th>
+<th class="tableblock halign-left valign-top">Contents</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>.start</code> / <code>.text</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40010000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">25 KiB</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>head.S</code> startup code + <code>cache_on/off/flush</code> routines + <code>proc_types</code> table</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>.table</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40016368</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">28 B</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Per-CPU cache function pointer table (used by <code>call_cache_fn</code>)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>.rodata</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40016384</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">3.5 KiB</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Read-only constant data</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>.piggydata</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x4001712C</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">~9.97 MB</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>gzip</code>-compressed kernel <code>Image</code> — the actual decompression payload</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>.got.plt</code> / <code>.got</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40A09C74</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">48 B</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Global Offset Table — absolute C pointers, patched after relocation</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>.bss</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40A09CA8</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">24 B</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Uninitialised variables — zeroed at runtime before calling C code</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>.stack</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40A09CC0</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">4 KiB</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Decompressor stack (grows downward ↓)</p></td>
+</tr>
+</tbody>
+</table>
+<hr>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_bootloader_handover"><a class="anchor" href="#_bootloader_handover"></a>3. Bootloader Handover</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>The bootloader (U-Boot, EFI, or the legacy Angel monitor) places <code>zImage</code> into
+physical RAM and jumps to its entry point.
+Russell King&#8217;s
+<a href="https://www.armlinux.org.uk/developer/booting.php">Booting ARM Linux</a> document (2002)
+defines the ABI that all ARM bootloaders must follow.</p>
+</div>
+<div class="sect2">
+<h3 id="_bootloader_register_abi"><a class="anchor" href="#_bootloader_register_abi"></a>3.1. Bootloader Register ABI</h3>
+<div class="paragraph">
+<p>On entry to <code>zImage</code>, the CPU must be in Supervisor (SVC) mode with interrupts,
+MMU, and caches disabled.</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 14.2857%;">
+<col style="width: 28.5714%;">
+<col style="width: 57.1429%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Register</th>
+<th class="tableblock halign-left valign-top">Value</th>
+<th class="tableblock halign-left valign-top">Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r0</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x00000000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Must be zero (reserved for future use)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r1</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Machine ID or <code>0</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Legacy machine type number.  Ignored on Device Tree kernels.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r2</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Physical address</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Pointer to ATAGs list <strong>or</strong> Device Tree Blob (DTB) in physical RAM.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>pc</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>zImage</code> load address</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">CPU jumps here — execution starts at <code>head.S start:</code> label.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="sect2">
+<h3 id="_initial_ram_layout"><a class="anchor" href="#_initial_ram_layout"></a>3.2. Initial RAM Layout</h3>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/diag-ram-initial.png" alt="Initial RAM layout" width="680">
+</div>
+<div class="title">Figure 5. Physical RAM state immediately after bootloader hands over control</div>
+</div>
+<div class="paragraph">
+<p>In this QEMU session the key addresses are:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code>RAM base        = 0x40000000   (first 128 MiB-aligned block)
+zImage loaded   = 0x40010000   (PC starts here)
+DTB in r2       = 0x48000000
+ZRELADDR (r4)   = 0x40208000   (= RAM base + TEXT_OFFSET)</code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_launching_qemu_with_gdb"><a class="anchor" href="#_launching_qemu_with_gdb"></a>3.3. Launching QEMU with GDB</h3>
+<div class="paragraph">
+<p>The QEMU session is started with the GDB server enabled so we can trace execution:</p>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/launch-qemu-with-gdb.png" alt="Launch QEMU" width="640">
+</div>
+<div class="title">Figure 6. QEMU launched with -S (freeze CPU) and -s (GDB server on :1234)</div>
+</div>
+<div class="paragraph">
+<p>Connect GDB and load the compressed vmlinux symbol file:</p>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/run-gdb.png" alt="GDB session" width="640">
+</div>
+<div class="title">Figure 7. GDB connected to QEMU, stopped at the zImage entry point</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code>(gdb) target remote :1234
+(gdb) add-symbol-file arch/arm/boot/compressed/vmlinux 0x40010000
+(gdb) break *0x40010000
+(gdb) continue</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The memory layout at the bootloader jump point — the first three words at
+<code>0x40000010</code> encode the machine type and kernel entry point:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code>0x40000010: .word  &lt;machine_type or 0&gt;
+0x40000014: .word  &lt;dtb_phys_addr&gt;
+0x40000018: .word  &lt;kernel_entry_point&gt;</code></pre>
+</div>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/dump-pc.png" alt="Dump PC" width="560">
+</div>
+<div class="title">Figure 8. GDB dump of entry point showing the bootloader-filled fields</div>
+</div>
+<hr>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_head_s_execution_phase_by_phase"><a class="anchor" href="#_head_s_execution_phase_by_phase"></a>4. head.S Execution — Phase by Phase</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p><code>arch/arm/boot/compressed/head.S</code> is the heart of the decompressor.  It is pure ARM
+assembly with no C library, and must be <strong>fully position-independent (PIC)</strong> because it
+runs before the GOT is patched and before it knows exactly where in RAM it was loaded.</p>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/kernel-initialization-graph.png" alt="Initialization graph" width="560">
+</div>
+<div class="title">Figure 9. head.S high-level initialization flow</div>
+</div>
+<div class="sect2">
+<h3 id="_nop_sled_and_magic_words"><a class="anchor" href="#_nop_sled_and_magic_words"></a>4.1. NOP Sled and Magic Words</h3>
+<div class="paragraph">
+<p>Execution begins at the <code>start:</code> symbol.  Legacy <code>a.out</code>-format bootloaders jump
+32 bytes (8 instructions) into the image to skip a fake <code>a.out</code> header.
+The 8 NOPs fill exactly those 32 bytes, preserving compatibility:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm"><span class="nl">start</span><span class="err">:</span>
+    <span class="nf">__initial_nops</span>          <span class="no">@</span> <span class="mi">3</span> <span class="nv">NOPs</span> <span class="o">(</span><span class="nv">mandatory</span> <span class="nv">prefix</span><span class="o">)</span>
+    <span class="err">.</span><span class="nb">rept</span> <span class="mi">5</span>
+    <span class="nf">__nop</span>                   <span class="no">@</span> <span class="mi">5</span> <span class="nv">more</span> <span class="nv">NOPs</span>
+    <span class="err">.</span><span class="nb">endr</span>
+<span class="cp">#ifndef CONFIG_THUMB2_KERNEL</span>
+    <span class="nf">__nop</span>                   <span class="no">@</span> <span class="mi">1</span> <span class="nv">final</span> <span class="nv">NOP</span> <span class="o">(</span><span class="nv">ARM</span> <span class="nv">state</span> <span class="nv">only</span><span class="o">)</span>
+<span class="cp">#endif</span>
+    <span class="nb">W</span><span class="err">(</span><span class="nb">b</span><span class="err">)</span>    <span class="mi">1</span><span class="nv">f</span>              <span class="no">@</span> <span class="nv">jump</span> <span class="nv">over</span> <span class="nv">magic</span> <span class="nv">word</span> <span class="nv">table</span>
+
+    <span class="err">.</span><span class="nb">word</span>   <span class="nv">_magic_sig</span>      <span class="no">@</span> <span class="mh">0x016F2818</span> <span class="err">—</span> <span class="nv">zImage</span> <span class="nv">identifier</span>
+    <span class="err">.</span><span class="nb">word</span>   <span class="nv">_magic_start</span>    <span class="no">@</span> <span class="nv">absolute</span> <span class="nv">load</span> <span class="nv">address</span>
+    <span class="err">.</span><span class="nb">word</span>   <span class="nv">_magic_end</span>      <span class="no">@</span> <span class="nv">zImage</span> <span class="nv">end</span> <span class="nv">address</span>
+    <span class="err">.</span><span class="nb">word</span>   <span class="mh">0x04030201</span>      <span class="no">@</span> <span class="nv">endianness</span> <span class="nv">flag</span>
+    <span class="err">.</span><span class="nb">word</span>   <span class="mh">0x45454545</span>      <span class="no">@</span> <span class="nv">secondary</span> <span class="nv">magic</span> <span class="nv">number</span>
+    <span class="err">.</span><span class="nb">word</span>   <span class="nv">_magic_table</span>    <span class="no">@</span> <span class="nv">additional</span> <span class="nv">data</span> <span class="nv">table</span> <span class="nv">pointer</span></code></pre>
+</div>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/move-pc-to-next-inst-1.png" alt="NOP sled" width="640">
+</div>
+<div class="title">Figure 10. GDB showing the NOP sled and magic words at 0x40010000</div>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/move-pc-to-next-inst-2.png" alt="PC advance" width="640">
+</div>
+<div class="title">Figure 11. PC advancing through the NOPs to the first real instruction</div>
+</div>
+<div class="admonitionblock tip">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-tip" title="Tip"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>The <code>0x40010000</code> address corresponds to the <code>.text</code> section base.
+You can verify this with:
+<code>arm-poky-linux-gnueabi-objdump -D arch/arm/boot/compressed/vmlinux | head -30</code></p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_saving_atags_dtb_pointer_and_architecture_id"><a class="anchor" href="#_saving_atags_dtb_pointer_and_architecture_id"></a>4.2. Saving ATAGS / DTB Pointer and Architecture ID</h3>
+<div class="paragraph">
+<p>Immediately after jumping over the magic words the code saves the bootloader-provided
+values before anything can corrupt them:</p>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/head.s-atags.png" alt="ATAGS code" width="600">
+</div>
+<div class="title">Figure 12. head.S code that saves r1 and r2 on entry</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm"><span class="nl">1</span><span class="err">:</span>
+    <span class="nb">mrs</span>     <span class="nv">r9</span><span class="o">,</span> <span class="nv">cpsr</span>            <span class="no">@</span> <span class="nv">save</span> <span class="nv">current</span> <span class="nv">processor</span> <span class="nv">mode</span> <span class="nv">for</span> <span class="nv">later</span>
+    <span class="nb">mov</span>     <span class="nv">r7</span><span class="o">,</span> <span class="nv">r1</span>              <span class="no">@</span> <span class="nv">save</span> <span class="nv">architecture</span> <span class="nv">ID</span> <span class="o">(</span><span class="nv">or</span> <span class="mi">0</span> <span class="nv">for</span> <span class="nv">DT</span> <span class="nv">boots</span><span class="o">)</span>
+    <span class="nb">mov</span>     <span class="nv">r8</span><span class="o">,</span> <span class="nv">r2</span>              <span class="no">@</span> <span class="nv">save</span> <span class="nv">ATAGs</span> <span class="o">/</span> <span class="nv">DTB</span> <span class="nv">physical</span> <span class="nv">address</span></code></pre>
+</div>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/save-atags.png" alt="Save ATAGs GDB" width="600">
+</div>
+<div class="title">Figure 13. GDB showing the save instructions executing</div>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/arch-id-atags-pointer.png" alt="Arch ID and ATAGS" width="560">
+</div>
+<div class="title">Figure 14. Register dump: Arch ID = 0xFFFFFFFF, ATAGs/DTB = 0x48000000</div>
+</div>
+<div class="paragraph">
+<p><code>r7</code> and <code>r8</code> are preserved throughout the entire decompressor and restored as <code>r1</code>
+and <code>r2</code> in <code>__enter_kernel</code> (see <a href="#enter_kernel">Section 8</a>).</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_entering_svc_mode_and_disabling_irqfiq"><a class="anchor" href="#_entering_svc_mode_and_disabling_irqfiq"></a>4.3. Entering SVC Mode and Disabling IRQ/FIQ</h3>
+<div class="paragraph">
+<p>The <code>safe_svcmode_maskall</code> macro forces the CPU into Supervisor mode and masks all
+interrupts.  This is required because the decompressor runs with no interrupt vectors
+or handlers configured:</p>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/enter-svc-mode.png" alt="Enter SVC mode" width="560">
+</div>
+<div class="title">Figure 15. safe_svcmode_maskall code sequence</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm">    <span class="nf">safe_svcmode_maskall</span> <span class="nv">r0</span>  <span class="no">@</span> <span class="nv">force</span> <span class="nv">SVC</span> <span class="nv">mode</span><span class="o">,</span> <span class="nv">mask</span> <span class="nv">IRQ</span> <span class="nv">and</span> <span class="nv">FIQ</span>
+    <span class="nb">msr</span>     <span class="nv">spsr_cxsf</span><span class="o">,</span> <span class="nv">r9</span>    <span class="no">@</span> <span class="nv">save</span> <span class="nv">original</span> <span class="nv">boot</span> <span class="nv">mode</span> <span class="nv">in</span> <span class="nv">SPSR</span></code></pre>
+</div>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/svc-r0-cpsr.png" alt="SVC CPSR" width="500">
+</div>
+<div class="title">Figure 16. CPSR = 0x1D3 — SVC mode confirmed, IRQ and FIQ masked</div>
+</div>
+<div class="paragraph">
+<p>Decoding <code>CPSR = 0x1D3</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code>0x1d3 = 0000 0000 0000 0000 0000 0001 1101 0011
+                                         ^^^^^
+bits [4:0] = 0x13  →  Supervisor (SVC) mode
+bit  [6]   = 1     →  FIQ masked
+bit  [7]   = 1     →  IRQ masked
+bit  [5]   = 0     →  ARM state (not Thumb)
+bits[31:28]= 0000  →  NZCV condition flags cleared</code></pre>
+</div>
+</div>
+<table class="tableblock frame-all grid-all" style="width: 80%;">
+<colgroup>
+<col style="width: 16.6666%;">
+<col style="width: 16.6666%;">
+<col style="width: 16.6666%;">
+<col style="width: 50.0002%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Field</th>
+<th class="tableblock halign-left valign-top">Bits</th>
+<th class="tableblock halign-left valign-top">Value</th>
+<th class="tableblock halign-left valign-top">Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Mode</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">[4:0]</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x13</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Supervisor (SVC) mode</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">T</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">[5]</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">ARM state (not Thumb)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">F</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">[6]</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>1</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">FIQ masked</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">I</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">[7]</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>1</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">IRQ masked</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">NZCV</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">[31:28]</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Condition flags cleared</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="sect2">
+<h3 id="_locating_physical_memory_base_auto_zreladdr"><a class="anchor" href="#_locating_physical_memory_base_auto_zreladdr"></a>4.4. Locating Physical Memory Base (AUTO_ZRELADDR)</h3>
+<div class="paragraph">
+<p>The decompressor needs to know where physical RAM starts so it can compute the
+final kernel load address.  On platforms with <code>CONFIG_AUTO_ZRELADDR</code> (the modern
+default), it derives this from the program counter using a bitmask:</p>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/find-physical-memory.png" alt="Find physical memory" width="600">
+</div>
+<div class="title">Figure 17. AUTO_ZRELADDR code in head.S</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm">    <span class="nb">mov</span>     <span class="nv">r0</span><span class="o">,</span> <span class="nv">pc</span>              <span class="no">@</span> <span class="nv">r0</span> <span class="o">=</span> <span class="nv">current</span> <span class="nv">PC</span> <span class="o">(</span><span class="nv">inside</span> <span class="nv">zImage</span><span class="o">)</span>
+    <span class="nb">and</span>     <span class="nv">r0</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="o">#</span><span class="mh">0xf8000000</span> <span class="no">@</span> <span class="nv">mask</span> <span class="nv">to</span> <span class="mi">128</span> <span class="nv">MiB</span><span class="o">-</span><span class="nv">aligned</span> <span class="nv">block</span>
+    <span class="err">@</span> <span class="nv">r0</span> <span class="o">=</span> <span class="nv">physical</span> <span class="nv">RAM</span> <span class="nv">base</span></code></pre>
+</div>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/find-phy-addr.png" alt="Find physical address" width="500">
+</div>
+<div class="title">Figure 18. GDB: r0 = 0x40000000 after masking the PC</div>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p><strong>Why <code>0xF8000000</code>?</strong>
+This mask preserves the top 5 bits of the 32-bit address, which encode which
+128 MiB block of RAM is active.  The lower 27 bits (offset within the block)
+are discarded.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code>0xF8000000 = 1111 1000 0000 0000 0000 0000 0000 0000
+              ─────                                   ← top 5 bits kept
+Example:
+  PC     = 0x400100A4
+  mask   = 0xF8000000
+  result = 0x40000000  ← physical RAM base</code></pre>
+</div>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>For platforms where physical RAM does <strong>not</strong> start at a 128 MiB boundary,
+<code>fdt_check_mem_start()</code> validates and optionally corrects <code>r0</code> using the DTB&#8217;s
+memory nodes:</p>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/fdt-mem-check.png" alt="FDT mem check" width="600">
+</div>
+<div class="title">Figure 19. DTB at 0x48000000 — first word 0xEDFE0DD0 = byte-swapped FDT magic 0xD00DFEED ✓</div>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/memory-address.png" alt="Memory address" width="600">
+</div>
+<div class="title">Figure 20. Memory dump confirming valid FDT header</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_computing_the_final_kernel_load_address_zreladdr"><a class="anchor" href="#_computing_the_final_kernel_load_address_zreladdr"></a>4.5. Computing the Final Kernel Load Address (ZRELADDR)</h3>
+<div class="paragraph">
+<p>Once the RAM base is in <code>r0</code>, <code>TEXT_OFFSET</code> is added to produce <code>ZRELADDR</code> — the
+address where the decompressed kernel will be written.  <code>TEXT_OFFSET</code> is defined in
+<code>arch/arm/Makefile</code>:</p>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/textofs.png" alt="TEXT offset" width="580">
+</div>
+<div class="title">Figure 21. TEXT_OFFSET addition code in head.S</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm">    <span class="err">/</span><span class="k">*</span> <span class="nv">Determine</span> <span class="nv">final</span> <span class="nv">kernel</span> <span class="nv">image</span> <span class="nv">address</span> <span class="o">*/</span>
+    <span class="nb">add</span>     <span class="nv">r4</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="o">#</span><span class="nv">TEXT_OFFSET</span>    <span class="no">@</span> <span class="nv">r4</span> <span class="o">=</span> <span class="nv">RAM_BASE</span> <span class="o">+</span> <span class="nv">TEXT_OFFSET</span>
+    <span class="err">@</span> <span class="nv">For</span> <span class="nv">this</span> <span class="nv">board</span><span class="err">:</span> <span class="mh">0x40000000</span> <span class="o">+</span> <span class="mh">0x208000</span> <span class="o">=</span> <span class="mh">0x40208000</span></code></pre>
+</div>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/text-offset.png" alt="Text offset GDB" width="600">
+</div>
+<div class="title">Figure 22. GDB confirming r4 = 0x40208000 (ZRELADDR)</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code>(gdb) info registers r4 r0
+r4  =  0x40208000   (1075871744)
+r0  =  0x40000000   (1073741824)</code></pre>
+</div>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>The <code>0x208000</code> <code>TEXT_OFFSET</code> used here is the Qualcomm-style value, where the first
+2 MB of RAM (<code>0x200000</code>) is reserved for shared memory with the modem CPU.</p>
+</div>
+<div class="paragraph">
+<p>Most conventional platforms use <code>TEXT_OFFSET = 0x8000</code> (32 KB).  The 32 KB
+convention exists because:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>ARM systems traditionally place interrupt vectors at <code>0x00000000</code></p>
+</li>
+<li>
+<p>ATAGs are typically placed at <code>0x00000100</code></p>
+</li>
+<li>
+<p>The kernel needs 16 KB (<code>0x4000</code>) <strong>below</strong> <code>TEXT_OFFSET</code> for its initial page table</p>
+</li>
+</ul>
+</div>
+</td>
+</tr>
+</table>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_setting_up_the_page_table_and_enabling_caches"><a class="anchor" href="#_setting_up_the_page_table_and_enabling_caches"></a>4.6. Setting Up the Page Table and Enabling Caches</h3>
+<div class="paragraph">
+<p>Decompressing ~10 MB in software is slow.  Enabling the CPU&#8217;s I-cache and D-cache
+dramatically speeds it up.  ARM caches require a page table even for a flat 1:1
+virtual=physical mapping:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>The 16 KiB page table is placed at <code>r4 - 0x4000</code> (just below ZRELADDR).</p>
+</li>
+<li>
+<p>It is only set up if it won&#8217;t overwrite the decompressor itself.</p>
+</li>
+<li>
+<p>It covers both the decompressor region and kernel destination with cacheable,
+bufferable attributes.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm">    <span class="nb">mov</span>     <span class="nv">r0</span><span class="o">,</span> <span class="nv">pc</span>
+    <span class="nb">cmp</span>     <span class="nv">r0</span><span class="o">,</span> <span class="nv">r4</span>              <span class="no">@</span> <span class="nv">is</span> <span class="nv">PC</span> <span class="o">&lt;</span> <span class="nv">ZRELADDR</span><span class="o">?</span>
+    <span class="nb">ldrcc</span>   <span class="nv">r0</span><span class="o">,</span> <span class="mf">.</span><span class="nv">Lheadroom</span>      <span class="no">@</span> <span class="nv">load</span> <span class="nv">safety</span> <span class="nv">headroom</span>
+    <span class="nb">addcc</span>   <span class="nv">r0</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="nv">pc</span>
+    <span class="nb">cmpcc</span>   <span class="nv">r4</span><span class="o">,</span> <span class="nv">r0</span>              <span class="no">@</span> <span class="nv">will</span> <span class="nv">the</span> <span class="nv">page</span> <span class="nv">table</span> <span class="nv">fit</span> <span class="nv">safely</span><span class="o">?</span>
+    <span class="nb">orrcc</span>   <span class="nv">r4</span><span class="o">,</span> <span class="nv">r4</span><span class="o">,</span> <span class="o">#</span><span class="mi">1</span>          <span class="no">@</span> <span class="nv">LSB</span><span class="o">=</span><span class="mi">1</span> <span class="nv">means</span> <span class="nv">cache_on</span> <span class="nv">was</span> <span class="nv">skipped</span>
+    <span class="nb">blcs</span>    <span class="nv">cache_on</span>            <span class="no">@</span> <span class="nv">call</span> <span class="nv">cache_on</span> <span class="nv">if</span> <span class="nv">safe</span></code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p><code>cache_on</code> selects the correct cache-enable routine from the <code>proc_types</code> table
+by matching the CPU ID register (<code>CP15 c0</code>).  This handles all ARM variants from
+ARMv4 through ARMv7.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_setting_up_stack_and_malloc_area_restart_label"><a class="anchor" href="#_setting_up_stack_and_malloc_area_restart_label"></a>4.7. Setting Up Stack and Malloc Area (restart: label)</h3>
+<div class="paragraph">
+<p>The <code>restart:</code> label is the re-entry point used <strong>both</strong> on first execution <strong>and</strong> after
+self-relocation.  It sets up the C runtime prerequisites:</p>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/restart-function.png" alt="Restart function" width="640">
+</div>
+<div class="title">Figure 23. restart: label code in head.S</div>
+</div>
+<div class="sect3">
+<h4 id="_position_independent_stack_calculation_lc1"><a class="anchor" href="#_position_independent_stack_calculation_lc1"></a>4.7.1. Position-Independent Stack Calculation (LC1)</h4>
+<div class="paragraph">
+<p>The decompressor must be fully position-independent — it cannot know where in RAM
+it was loaded, so stack and heap addresses cannot be hard-coded.  Instead, they are
+stored as <strong>relative offsets</strong> in the <code>LC1</code> data structure:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm">    <span class="nb">adr</span>     <span class="nv">r1</span><span class="o">,</span> <span class="nv">LC1</span>             <span class="no">@</span> <span class="nv">r1</span> <span class="o">=</span> <span class="nv">runtime</span> <span class="nv">address</span> <span class="nv">of</span> <span class="nv">LC1</span> <span class="nv">label</span>
+    <span class="nb">ldr</span>     <span class="nv">sp</span><span class="o">,</span> <span class="o">[</span><span class="nv">r1</span><span class="o">]</span>            <span class="no">@</span> <span class="nv">sp</span> <span class="o">=</span> <span class="nv">LC1</span><span class="o">[</span><span class="mi">0</span><span class="o">]</span>  <span class="o">(</span><span class="nv">relative</span> <span class="nv">offset</span><span class="o">)</span>
+    <span class="nb">ldr</span>     <span class="nv">r6</span><span class="o">,</span> <span class="o">[</span><span class="nv">r1</span><span class="o">,</span> <span class="o">#</span><span class="mi">4</span><span class="o">]</span>        <span class="no">@</span> <span class="nv">r6</span> <span class="o">=</span> <span class="nv">LC1</span><span class="o">[</span><span class="mi">1</span><span class="o">]</span>  <span class="o">(</span><span class="nv">relative</span> <span class="nv">offset</span><span class="o">)</span>
+    <span class="nb">add</span>     <span class="nv">sp</span><span class="o">,</span> <span class="nv">sp</span><span class="o">,</span> <span class="nv">r1</span>          <span class="no">@</span> <span class="nv">sp</span> <span class="o">=</span> <span class="nv">runtime_LC1</span> <span class="o">+</span> <span class="nv">offset</span> <span class="o">=</span> <span class="nv">absolute</span> <span class="nv">stack</span> <span class="nv">top</span>
+    <span class="nb">add</span>     <span class="nv">r6</span><span class="o">,</span> <span class="nv">r6</span><span class="o">,</span> <span class="nv">r1</span>          <span class="no">@</span> <span class="nv">r6</span> <span class="o">=</span> <span class="nv">runtime_LC1</span> <span class="o">+</span> <span class="nv">offset</span> <span class="o">=</span> <span class="nv">absolute</span> <span class="nv">_edata</span>
+
+<span class="err">...</span>
+
+<span class="nl">LC1</span><span class="err">:</span>
+    <span class="err">.</span><span class="nb">word</span>   <span class="mf">.</span><span class="nv">L_user_stack_end</span> <span class="o">-</span> <span class="nv">LC1</span>   <span class="no">@</span> <span class="nv">LC1</span><span class="o">[</span><span class="mi">0</span><span class="o">]</span> <span class="o">=</span> <span class="mh">0x009FAA10</span>
+    <span class="err">.</span><span class="nb">word</span>   <span class="nv">_edata</span> <span class="o">-</span> <span class="nv">LC1</span>              <span class="no">@</span> <span class="nv">LC1</span><span class="o">[</span><span class="mi">1</span><span class="o">]</span> <span class="o">=</span> <span class="mh">0x009F99F8</span></code></pre>
+</div>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/LC0-LC1.png" alt="LC0 LC1 objdump" width="620">
+</div>
+<div class="title">Figure 24. objdump showing LC1 data words in the .text section</div>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/stack-location.png" alt="Stack location" width="620">
+</div>
+<div class="title">Figure 25. Stack address calculation trace</div>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/of-use-1.png" alt="Of use 1" width="500">
+</div>
+<div class="title">Figure 26. GDB: r1 = 0x400102B0 (runtime address of LC1)</div>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/sp-before-relocation.png" alt="SP before relocation" width="600">
+</div>
+<div class="title">Figure 27. GDB: SP = 0x009FAA10 — relative offset, not yet absolute</div>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/sp-after-relocation.png" alt="SP after relocation" width="600">
+</div>
+<div class="title">Figure 28. GDB: SP = 0x40A0ACC0 — absolute address after <code>add sp, sp, r1</code></div>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_stack_address_calculation_proof"><a class="anchor" href="#_stack_address_calculation_proof"></a>4.7.2. Stack Address Calculation Proof</h4>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/stack-ptr-lc1.png" alt="Stack pointer LC1" width="620">
+</div>
+<div class="title">Figure 29. LC1 stack calculation — step by step</div>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 22.2222%;">
+<col style="width: 22.2222%;">
+<col style="width: 33.3333%;">
+<col style="width: 22.2223%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Symbol</th>
+<th class="tableblock halign-left valign-top">Linked Value</th>
+<th class="tableblock halign-left valign-top">Calculation</th>
+<th class="tableblock halign-left valign-top">Runtime Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>LC1</code> (linked)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x000002B0</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">—</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">—</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>LC1</code> (runtime)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">—</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>adr r1, LC1</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x400102B0</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>.L_user_stack_end</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x009FACC0</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>.stack(0x9F9CC0) + 0x1000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x009FACC0</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>LC1[0]</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x009FAA10</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>.L_user_stack_end − LC1</code> = <code>0x9FACC0 − 0x2B0</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x009FAA10</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>sp</code> (final)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">—</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x400102B0 + 0x009FAA10</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40A0ACC0</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>_edata</code> (linked)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x009F9CA8</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">—</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">—</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>LC1[1]</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x009F99F8</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>_edata − LC1</code> = <code>0x9F9CA8 − 0x2B0</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x009F99F8</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r6</code> = <code>_edata</code> (runtime)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">—</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x400102B0 + 0x009F99F8</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40A09CA8</code></p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p><strong>Section layout confirmation</strong> from <code>readelf</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code>arm-poky-linux-gnueabi-readelf -S arch/arm/boot/compressed/vmlinux</code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code>[Nr] Name     Type     Addr     Off    Size
+[ 8] .bss     NOBITS   009f9ca8 9faca8 000018
+[ 9] .stack   NOBITS   009f9cc0 9faca8 001000   ← 4 KiB
+
+.stack Addr = 0x009F9CC0
+.stack Size = 0x1000
+.L_user_stack_end = 0x009F9CC0 + 0x1000 = 0x009FACC0</code></pre>
+</div>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/diag-stack-malloc.png" alt="Stack malloc diagram" width="620">
+</div>
+<div class="title">Figure 30. Complete stack, BSS and malloc layout after restart: completes</div>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_malloc_area"><a class="anchor" href="#_malloc_area"></a>4.7.3. Malloc Area</h4>
+<div class="paragraph">
+<p>A fixed 64 KiB block immediately above the stack top is reserved for the C
+decompressor (<code>misc.c</code>) heap:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm">    <span class="err">/</span><span class="k">*</span> <span class="nv">malloc</span> <span class="nv">space</span> <span class="nv">is</span> <span class="nv">above</span> <span class="nv">the</span> <span class="nv">relocated</span> <span class="nv">stack</span> <span class="o">(</span><span class="mi">64</span><span class="nv">k</span> <span class="nv">max</span><span class="o">)</span> <span class="o">*/</span>
+    <span class="nb">add</span>     <span class="nv">r10</span><span class="o">,</span> <span class="nv">sp</span><span class="o">,</span> <span class="o">#</span><span class="nv">MALLOC_SIZE</span>   <span class="no">@</span> <span class="nv">r10</span> <span class="o">=</span> <span class="nv">sp</span> <span class="o">+</span> <span class="mh">0x10000</span>  <span class="o">(</span><span class="nv">malloc</span> <span class="nv">top</span><span class="o">)</span>
+    <span class="err">@</span> <span class="nv">r10</span> <span class="o">=</span> <span class="mh">0x40A0ACC0</span> <span class="o">+</span> <span class="mh">0x10000</span> <span class="o">=</span> <span class="mh">0x40A1ACC0</span></code></pre>
+</div>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/malloc-space.png" alt="Malloc space" width="600">
+</div>
+<div class="title">Figure 31. GDB: r10 = 0x40A1ACC0 (malloc top = sp + 64K)</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code>(gdb) info registers r10 sp
+r10  =  0x40A1ACC0   (1084337344)
+sp   =  0x40A0ACC0   (1084272832)</code></pre>
+</div>
+</div>
+<hr>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_overwrite_safety_analysis"><a class="anchor" href="#_overwrite_safety_analysis"></a>5. Overwrite Safety Analysis</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>The most subtle part of the decompressor is the check that determines whether it is
+safe to decompress in place, or whether the decompressor must first move itself to
+a higher address before inflating the payload.</p>
+</div>
+<div class="sect2">
+<h3 id="_the_problem"><a class="anchor" href="#_the_problem"></a>5.1. The Problem</h3>
+<div class="paragraph">
+<p>The decompressor will inflate ~25.4 MiB starting at <code>ZRELADDR (0x40208000)</code>.
+But the decompressor itself is executing from <code>0x40010000</code> to <code>0x40A1ECC0</code> — a range
+of ~9.5 MiB.  Crucially, <code>0x40208000</code> falls <strong>inside</strong> that range:</p>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/diag-overlap-check.png" alt="Overlap check diagram" width="700">
+</div>
+<div class="title">Figure 32. Overlap analysis — decompressor and kernel destination regions</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_check_a_is_the_kernel_destination_above_the_decompressor"><a class="anchor" href="#_check_a_is_the_kernel_destination_above_the_decompressor"></a>5.2. Check A — Is the Kernel Destination Above the Decompressor?</h3>
+<div class="paragraph">
+<p>This check asks: will the decompressed kernel be placed <strong>completely above</strong> the
+decompressor&#8217;s working area (code + stack + malloc + page directory)?</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm">    <span class="nb">add</span>     <span class="nv">r10</span><span class="o">,</span> <span class="nv">r10</span><span class="o">,</span> <span class="o">#</span><span class="mi">16384</span>        <span class="no">@</span> <span class="nv">r10</span> <span class="o">+=</span> <span class="mi">16</span> <span class="nv">KiB</span> <span class="o">(</span><span class="nv">page</span> <span class="nv">directory</span> <span class="nv">size</span><span class="o">)</span>
+    <span class="nb">cmp</span>     <span class="nv">r4</span><span class="o">,</span> <span class="nv">r10</span>                 <span class="no">@</span> <span class="nv">is</span> <span class="nv">r4</span> <span class="o">(</span><span class="nv">ZRELADDR</span><span class="o">)</span> <span class="o">&gt;=</span> <span class="nv">r10</span><span class="o">?</span>
+    <span class="nb">bhs</span>     <span class="nv">wont_overwrite</span>          <span class="no">@</span> <span class="nv">PASS</span> <span class="err">→</span> <span class="nv">safe</span> <span class="nv">to</span> <span class="nv">decompress</span> <span class="nv">in</span> <span class="nv">place</span>
+    <span class="err">@</span> <span class="o">(</span><span class="nv">falls</span> <span class="nv">through</span> <span class="nv">on</span> <span class="nv">FAIL</span> <span class="err">→</span> <span class="nv">proceed</span> <span class="nv">to</span> <span class="nv">Check</span> <span class="nv">B</span><span class="o">)</span></code></pre>
+</div>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 22.2222%;">
+<col style="width: 22.2222%;">
+<col style="width: 55.5556%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Variable</th>
+<th class="tableblock halign-left valign-top">Value</th>
+<th class="tableblock halign-left valign-top">Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r4</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40208001</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">ZRELADDR (LSB=1 is the Thumb interwork bit — effective address = <code>0x40208000</code>)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r10</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40A1ACC0</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Malloc top</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r10 + 16K</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40A1ECC0</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">End of decompressor working area (page-dir added)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r10 + 16K + 16K</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40A22CC0</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Threshold that <code>r4</code> must <strong>exceed</strong> to pass Check A</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><strong>Result</strong></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><strong>FAIL</strong></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40208001 &lt; 0x40A22CC0</code> — kernel starts <strong>inside</strong> the decompressor area</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="sect2">
+<h3 id="_check_b_does_the_decompressed_kernel_fit_below_the_decompressor"><a class="anchor" href="#_check_b_does_the_decompressed_kernel_fit_below_the_decompressor"></a>5.3. Check B — Does the Decompressed Kernel Fit Below the Decompressor?</h3>
+<div class="paragraph">
+<p>This check asks: does the decompressed kernel end <strong>before</strong> it reaches the decompressor
+code?  (i.e. does the entire kernel fit in the gap below where we are running?)</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm">    <span class="nb">add</span>     <span class="nv">r10</span><span class="o">,</span> <span class="nv">r4</span><span class="o">,</span> <span class="nv">r9</span>             <span class="no">@</span> <span class="nv">r10</span> <span class="o">=</span> <span class="nv">r4</span> <span class="o">+</span> <span class="nv">inflated_size</span> <span class="o">=</span> <span class="nv">end</span><span class="o">-</span><span class="nv">of</span><span class="o">-</span><span class="nv">kernel</span>
+    <span class="nb">adr</span>     <span class="nv">r9</span><span class="o">,</span> <span class="nv">wont_overwrite</span>      <span class="no">@</span> <span class="nv">r9</span>  <span class="o">=</span> <span class="nv">runtime</span> <span class="nv">addr</span> <span class="nv">of</span> <span class="nv">wont_overwrite</span> <span class="nv">label</span>
+    <span class="nb">cmp</span>     <span class="nv">r10</span><span class="o">,</span> <span class="nv">r9</span>                 <span class="no">@</span> <span class="nv">is</span> <span class="nv">end</span><span class="o">-</span><span class="nv">of</span><span class="o">-</span><span class="nv">kernel</span> <span class="o">&lt;=</span> <span class="nv">wont_overwrite</span><span class="o">?</span>
+    <span class="nb">bls</span>     <span class="nv">wont_overwrite</span>          <span class="no">@</span> <span class="nv">PASS</span> <span class="err">→</span> <span class="nv">safe</span> <span class="nv">to</span> <span class="nv">decompress</span> <span class="nv">in</span> <span class="nv">place</span>
+    <span class="err">@</span> <span class="o">(</span><span class="nv">falls</span> <span class="nv">through</span> <span class="nv">on</span> <span class="nv">FAIL</span> <span class="err">→</span> <span class="nv">must</span> <span class="nv">relocate</span><span class="o">)</span></code></pre>
+</div>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/decompress-kernel.png" alt="Decompress kernel GDB" width="460">
+</div>
+<div class="title">Figure 33. GDB showing Check B register values — both snapshots</div>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>Between the two GDB snapshots shown above, the code executed
+<code>add r10, r4, r9</code> (so <code>r10</code> becomes end-of-kernel) and
+<code>adr r9, wont_overwrite</code> (so <code>r9</code> becomes the safe-exit label address).
+The registers <strong>change role</strong> — do not confuse the two snapshots.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 22.2222%;">
+<col style="width: 22.2222%;">
+<col style="width: 55.5556%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Variable</th>
+<th class="tableblock halign-left valign-top">Value</th>
+<th class="tableblock halign-left valign-top">Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r4</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40208001</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">ZRELADDR</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r9</code> (image size)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x01971D2C</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">26,680,620 bytes = 25.4 MiB inflated kernel size</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r10</code> = <code>r4 + r9</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x41B79D2D</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">End address of decompressed kernel</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r9</code> = <code>wont_overwrite</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x400101B4</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Address of the safe-exit label (only <code>+0x1B4</code> bytes into zImage!)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><strong>Result</strong></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><strong>FAIL</strong></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x41B79D2D</code> &gt;&gt; <code>0x400101B4</code> — kernel end is <strong>far above</strong> the decompressor</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="sect2">
+<h3 id="_overlap_extent_summary"><a class="anchor" href="#_overlap_extent_summary"></a>5.4. Overlap Extent Summary</h3>
+<table class="tableblock frame-all grid-all" style="width: 90%;">
+<colgroup>
+<col style="width: 42.8571%;">
+<col style="width: 28.5714%;">
+<col style="width: 28.5715%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Region</th>
+<th class="tableblock halign-left valign-top">Start</th>
+<th class="tableblock halign-left valign-top">End</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Decompressor working area</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40010000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40A1ECC0</code> (~9.5 MiB)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Decompressed kernel destination</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40208000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x41B79D2D</code> (~25.4 MiB)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><strong>Overlap zone</strong></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40208000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40A1ECC0</code> (~7.9 MiB)</p></td>
+</tr>
+</tbody>
+</table>
+<div class="admonitionblock warning">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-warning" title="Warning"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p><strong>Verdict</strong>: The decompressor is <strong>entirely inside</strong> the kernel&#8217;s destination range.
+Decompressing without relocation would corrupt the running decompressor code,
+stack, malloc heap, and page-directory scratch space — causing an immediate crash.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_decision_flowchart"><a class="anchor" href="#_decision_flowchart"></a>5.5. Decision Flowchart</h3>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/diag-decision-flow.png" alt="Decision flow" width="560">
+</div>
+<div class="title">Figure 34. Complete overwrite check decision tree with actual values</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_complete_address_reference_table"><a class="anchor" href="#_complete_address_reference_table"></a>5.6. Complete Address Reference Table</h3>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 30%;">
+<col style="width: 20%;">
+<col style="width: 10%;">
+<col style="width: 40%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Symbol / Region</th>
+<th class="tableblock halign-left valign-top">Address</th>
+<th class="tableblock halign-left valign-top">Source</th>
+<th class="tableblock halign-left valign-top">Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Physical RAM base</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40000000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Hardware</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">SoC memory start</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Decompressor base</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40010000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Bootloader</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">zImage loaded and executing here</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>wont_overwrite</code> label</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x400101B4</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">GDB <code>r9</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Only <code>+0x1B4</code> bytes past base</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r4</code> — ZRELADDR</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40208001</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Computed</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">LSB=1 Thumb bit; effective = <code>0x40208000</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Stack TOP (<code>sp</code>)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40A0ACC0</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>LC1+LC1[0]</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>LC1[0]</code> = <code>0x009FAA10</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Malloc top (<code>r10</code>)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40A1ACC0</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>sp + 64K</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">C heap for <code>decompress_kernel()</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Decompressor end (<code>r10</code>)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40A1ECC0</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">GDB <code>r10</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Malloc top + 16 KiB page directory</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Check A threshold</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40A22CC0</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Derived</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r10 + 0x4000</code>; <code>r4</code> must be ≥ this</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Inflated image size (<code>r9</code>)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x01971D2C</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">GDB <code>r9</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">26,680,620 bytes = ~25.4 MiB</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">End of decompressed kernel</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x41B79D2D</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r4 + r9</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40208001 + 0x1971D2C</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Relocation destination</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x41B7A600</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Derived</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">256-byte aligned above <code>0x41B79D2D</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">DTB (<code>r2</code>, <code>r8</code>)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x48000000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Bootloader</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Passed in <code>r2</code> — Device Tree Blob</p></td>
+</tr>
+</tbody>
+</table>
+<hr>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_self_relocation"><a class="anchor" href="#_self_relocation"></a>6. Self-Relocation</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Since both overwrite checks failed, the decompressor must move itself to a safe
+location above <code>0x41B79D2D</code> before inflating the payload.</p>
+</div>
+<div class="sect2">
+<h3 id="_computing_the_relocation_destination"><a class="anchor" href="#_computing_the_relocation_destination"></a>6.1. Computing the Relocation Destination</h3>
+<div class="paragraph">
+<p>The destination must be above the kernel end, with enough clearance that the
+relocation trampoline (the copy loop itself) doesn&#8217;t overwrite itself mid-copy:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm">    <span class="err">/</span><span class="k">*</span> <span class="nv">r10</span> <span class="o">=</span> <span class="nv">end</span><span class="o">-</span><span class="nv">of</span><span class="o">-</span><span class="nv">kernel</span> <span class="o">=</span> <span class="mh">0x41B79D2D</span> <span class="o">*/</span>
+    <span class="nb">add</span>     <span class="nv">r10</span><span class="o">,</span> <span class="nv">r10</span><span class="o">,</span> <span class="o">#((</span><span class="nv">reloc_code_end</span> <span class="o">-</span> <span class="nv">restart</span> <span class="o">+</span> <span class="mi">256</span><span class="o">)</span> <span class="o">&amp;</span> <span class="err">~</span><span class="mi">255</span><span class="o">)</span>
+    <span class="nb">bic</span>     <span class="nv">r10</span><span class="o">,</span> <span class="nv">r10</span><span class="o">,</span> <span class="o">#</span><span class="mi">255</span>
+    <span class="err">/</span><span class="k">*</span> <span class="nv">r10</span> <span class="o">=</span> <span class="mi">256</span><span class="o">-</span><span class="nv">byte</span> <span class="nv">aligned</span> <span class="nv">base</span> <span class="nv">above</span> <span class="nv">end</span><span class="o">-</span><span class="nv">of</span><span class="o">-</span><span class="nv">kernel</span> <span class="o">*/</span>
+    <span class="err">/</span><span class="k">*</span> <span class="nv">GDB</span> <span class="nv">confirms</span><span class="err">:</span> <span class="nv">r10</span> <span class="o">=</span> <span class="mh">0x41B7A600</span> <span class="o">*/</span>
+
+    <span class="nb">adr</span>     <span class="nv">r5</span><span class="o">,</span> <span class="nv">restart</span>
+    <span class="nb">bic</span>     <span class="nv">r5</span><span class="o">,</span> <span class="nv">r5</span><span class="o">,</span> <span class="o">#</span><span class="mi">31</span>         <span class="no">@</span> <span class="nv">align</span> <span class="nv">source</span> <span class="nv">start</span> <span class="nv">down</span> <span class="nv">to</span> <span class="mi">32</span> <span class="nv">bytes</span>
+    <span class="err">/</span><span class="k">*</span> <span class="nv">r5</span> <span class="o">=</span> <span class="nv">source</span> <span class="nv">start</span> <span class="err">≈</span> <span class="mh">0x40010000</span> <span class="o">*/</span></code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code>(gdb) info registers r6 r10
+r6   = 0x40A09CA8     &lt;&lt;&lt; _edata  (source end)
+r10  = 0x41B7A600     &lt;&lt;&lt; relocation destination base</code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_why_copy_backwards"><a class="anchor" href="#_why_copy_backwards"></a>6.2. Why Copy Backwards?</h3>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm"><span class="nl">1</span><span class="err">:</span>  <span class="nb">ldmdb</span>   <span class="nv">r6</span><span class="o">!,</span> <span class="o">{</span><span class="nv">r0</span> <span class="o">-</span> <span class="nv">r3</span><span class="o">,</span> <span class="nv">r10</span> <span class="o">-</span> <span class="nv">r12</span><span class="o">,</span> <span class="nv">lr</span><span class="o">}</span>  <span class="no">@</span> <span class="nv">load</span> <span class="mi">8</span> <span class="nv">words</span> <span class="nv">from</span> <span class="nv">source</span><span class="o">,</span> <span class="nv">decrement</span> <span class="nv">r6</span>
+    <span class="nb">cmp</span>     <span class="nv">r6</span><span class="o">,</span> <span class="nv">r5</span>                          <span class="no">@</span> <span class="nv">reached</span> <span class="nv">source</span> <span class="nv">start</span><span class="o">?</span>
+    <span class="nb">stmdb</span>   <span class="nv">r9</span><span class="o">!,</span> <span class="o">{</span><span class="nv">r0</span> <span class="o">-</span> <span class="nv">r3</span><span class="o">,</span> <span class="nv">r10</span> <span class="o">-</span> <span class="nv">r12</span><span class="o">,</span> <span class="nv">lr</span><span class="o">}</span>  <span class="no">@</span> <span class="nv">store</span> <span class="mi">8</span> <span class="nv">words</span> <span class="nv">to</span> <span class="nv">dest</span><span class="o">,</span> <span class="nv">decrement</span> <span class="nv">r9</span>
+    <span class="nb">bhi</span>     <span class="mi">1</span><span class="nv">b</span>                              <span class="no">@</span> <span class="nv">loop</span> <span class="nv">until</span> <span class="nv">done</span></code></pre>
+</div>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/diag-relocation.png" alt="Relocation diagram" width="700">
+</div>
+<div class="title">Figure 35. Three-stage memory view: before copy / during backward copy / after relocation</div>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>Since destination base (<code>0x41B7A600</code>) &gt; source base (<code>0x40010000</code>), a <strong>forward</strong>
+copy would risk the write pointer overtaking the read pointer if ranges overlapped.</p>
+</div>
+<div class="paragraph">
+<p>The <strong>backward</strong> copy (<code>ldmdb</code> / <code>stmdb</code>) reads from the highest source address
+first — each word is safely consumed before the destination pointer could alias it.
+This guarantees correctness even when source and destination partially overlap.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_jumping_to_relocated_code"><a class="anchor" href="#_jumping_to_relocated_code"></a>6.3. Jumping to Relocated Code</h3>
+<div class="paragraph">
+<p>After the copy the decompressor flushes the D-cache and branches to the relocated
+<code>restart:</code> entry:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm">    <span class="nb">mov</span>     <span class="nv">r0</span><span class="o">,</span> <span class="nv">r9</span>              <span class="no">@</span> <span class="nv">start</span> <span class="nv">of</span> <span class="nv">relocated</span> <span class="nv">zImage</span>
+    <span class="nb">add</span>     <span class="nv">r1</span><span class="o">,</span> <span class="nv">sp</span><span class="o">,</span> <span class="nv">r6</span>          <span class="no">@</span> <span class="nv">end</span> <span class="nv">of</span> <span class="nv">relocated</span> <span class="nv">zImage</span>
+    <span class="nb">bl</span>      <span class="nv">cache_clean_flush</span>   <span class="no">@</span> <span class="nv">flush</span> <span class="nv">D</span><span class="o">-</span><span class="nv">cache</span> <span class="nv">over</span> <span class="nv">copied</span> <span class="nv">range</span>
+
+    <span class="nb">badr</span>    <span class="nv">r0</span><span class="o">,</span> <span class="nv">restart</span>         <span class="no">@</span> <span class="nv">PC</span><span class="o">-</span><span class="nv">relative</span> <span class="nv">address</span> <span class="nv">of</span> <span class="nv">restart</span><span class="err">:</span>
+    <span class="nb">add</span>     <span class="nv">r0</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="nv">r6</span>          <span class="no">@</span> <span class="nv">apply</span> <span class="nv">relocation</span> <span class="nv">delta</span>
+    <span class="nb">mov</span>     <span class="nv">pc</span><span class="o">,</span> <span class="nv">r0</span>              <span class="no">@</span> <span class="nv">JUMP</span> <span class="nv">to</span> <span class="nv">relocated</span> <span class="nv">restart</span><span class="err">:</span> <span class="nv">at</span> <span class="mh">0x41B7A600</span><span class="o">+</span><span class="nv">offset</span></code></pre>
+</div>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>The relocated <code>restart:</code> re-executes the stack/malloc setup (<code>sp</code>, <code>r6</code>, <code>r10</code>)
+but now at the new high-memory addresses.  It then falls straight through the
+overwrite checks (which now both pass) into <code>wont_overwrite:</code>.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<hr>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_wont_overwrite_got_fixup_bss_clear_and_decompression"><a class="anchor" href="#_wont_overwrite_got_fixup_bss_clear_and_decompression"></a>7. wont_overwrite: — GOT Fixup, BSS Clear, and Decompression</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>All paths converge at <code>wont_overwrite:</code> — whether the decompressor relocated
+itself or arrived here directly.  The C runtime must be prepared before calling
+<code>decompress_kernel()</code>.</p>
+</div>
+<div class="sect2">
+<h3 id="_checking_the_relocation_delta"><a class="anchor" href="#_checking_the_relocation_delta"></a>7.1. Checking the Relocation Delta</h3>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm"><span class="nl">wont_overwrite</span><span class="err">:</span>
+    <span class="nb">adr</span>     <span class="nv">r0</span><span class="o">,</span> <span class="nv">LC0</span>
+    <span class="nb">ldmia</span>   <span class="nv">r0</span><span class="o">,</span> <span class="o">{</span><span class="nv">r1</span><span class="o">,</span> <span class="nv">r2</span><span class="o">,</span> <span class="nv">r3</span><span class="o">,</span> <span class="nv">r11</span><span class="o">,</span> <span class="nv">r12</span><span class="o">}</span>
+    <span class="nb">sub</span>     <span class="nv">r0</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="nv">r1</span>          <span class="no">@</span> <span class="nv">delta</span> <span class="o">=</span> <span class="nv">runtime_LC0</span> <span class="o">-</span> <span class="nv">linked_LC0</span>
+    <span class="err">@</span> <span class="nv">if</span> <span class="nv">delta</span> <span class="o">==</span> <span class="mi">0</span><span class="err">:</span> <span class="nv">we</span> <span class="nv">are</span> <span class="nv">at</span> <span class="nv">the</span> <span class="nv">linked</span> <span class="nv">address</span> <span class="o">(</span><span class="nv">no</span> <span class="nv">relocation</span> <span class="nv">needed</span><span class="o">)</span>
+    <span class="nb">orrs</span>    <span class="nv">r1</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="nv">r5</span>          <span class="no">@</span> <span class="nv">r5</span> <span class="o">=</span> <span class="nv">appended</span> <span class="nv">DTB</span> <span class="nv">size</span> <span class="o">(</span><span class="mi">0</span> <span class="nv">if</span> <span class="nv">absent</span><span class="o">)</span>
+    <span class="nb">beq</span>     <span class="nv">not_relocated</span>       <span class="no">@</span> <span class="nv">skip</span> <span class="nv">GOT</span> <span class="nv">fixup</span> <span class="nv">if</span> <span class="nv">both</span> <span class="nv">zero</span></code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_got_fixup"><a class="anchor" href="#_got_fixup"></a>7.2. GOT Fixup</h3>
+<div class="paragraph">
+<p>The Global Offset Table (GOT) contains absolute pointers to global variables in
+<code>misc.c</code>.  After relocation these are stale — they point to the old location.
+Each entry is patched with the relocation delta:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm">    <span class="nb">add</span>     <span class="nv">r11</span><span class="o">,</span> <span class="nv">r11</span><span class="o">,</span> <span class="nv">r0</span>        <span class="no">@</span> <span class="nv">GOT</span> <span class="nv">start</span> <span class="o">+=</span> <span class="nv">delta</span>
+    <span class="nb">add</span>     <span class="nv">r12</span><span class="o">,</span> <span class="nv">r12</span><span class="o">,</span> <span class="nv">r0</span>        <span class="no">@</span> <span class="nv">GOT</span> <span class="nv">end</span>   <span class="o">+=</span> <span class="nv">delta</span>
+    <span class="nb">add</span>     <span class="nv">r2</span><span class="o">,</span>  <span class="nv">r2</span><span class="o">,</span>  <span class="nv">r0</span>        <span class="no">@</span> <span class="nv">BSS</span> <span class="nv">start</span> <span class="o">+=</span> <span class="nv">delta</span>
+    <span class="nb">add</span>     <span class="nv">r3</span><span class="o">,</span>  <span class="nv">r3</span><span class="o">,</span>  <span class="nv">r0</span>        <span class="no">@</span> <span class="nv">BSS</span> <span class="nv">end</span>   <span class="o">+=</span> <span class="nv">delta</span>
+
+<span class="nl">1</span><span class="err">:</span>  <span class="nb">ldr</span>     <span class="nv">r1</span><span class="o">,</span> <span class="o">[</span><span class="nv">r11</span><span class="o">,</span> <span class="o">#</span><span class="mi">0</span><span class="o">]</span>       <span class="no">@</span> <span class="nv">load</span> <span class="nv">GOT</span> <span class="nv">entry</span> <span class="o">(</span><span class="nv">absolute</span> <span class="nv">pointer</span><span class="o">)</span>
+    <span class="nb">add</span>     <span class="nv">r1</span><span class="o">,</span> <span class="nv">r1</span><span class="o">,</span> <span class="nv">r0</span>          <span class="no">@</span> <span class="nv">add</span> <span class="nv">relocation</span> <span class="nv">delta</span>
+    <span class="nb">cmp</span>     <span class="nv">r1</span><span class="o">,</span> <span class="nv">r2</span>              <span class="no">@</span> <span class="nv">if</span> <span class="nv">entry</span> <span class="o">&gt;=</span> <span class="nv">BSS</span> <span class="nv">start</span> <span class="mf">...</span>
+    <span class="nb">cmphs</span>   <span class="nv">r3</span><span class="o">,</span> <span class="nv">r1</span>              <span class="no">@</span> <span class="mf">...</span> <span class="nv">and</span> <span class="nv">BSS</span> <span class="nv">end</span> <span class="o">&gt;</span> <span class="nv">entry</span> <span class="mf">...</span>
+    <span class="nb">addhi</span>   <span class="nv">r1</span><span class="o">,</span> <span class="nv">r1</span><span class="o">,</span> <span class="nv">r5</span>          <span class="no">@</span> <span class="mf">...</span> <span class="nv">also</span> <span class="nv">add</span> <span class="nv">appended</span> <span class="nv">DTB</span> <span class="nv">size</span> <span class="o">(</span><span class="nv">BSS</span> <span class="nv">bump</span><span class="o">)</span>
+    <span class="nb">str</span>     <span class="nv">r1</span><span class="o">,</span> <span class="o">[</span><span class="nv">r11</span><span class="o">],</span> <span class="o">#</span><span class="mi">4</span>       <span class="no">@</span> <span class="nv">store</span> <span class="nv">patched</span> <span class="nv">entry</span><span class="o">,</span> <span class="nv">advance</span>
+    <span class="nb">cmp</span>     <span class="nv">r11</span><span class="o">,</span> <span class="nv">r12</span>
+    <span class="nb">blo</span>     <span class="mi">1</span><span class="nv">b</span>                  <span class="no">@</span> <span class="nv">loop</span> <span class="nv">until</span> <span class="nv">all</span> <span class="nv">GOT</span> <span class="nv">entries</span> <span class="nv">patched</span></code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_bss_clear"><a class="anchor" href="#_bss_clear"></a>7.3. BSS Clear</h3>
+<div class="paragraph">
+<p>All uninitialized global variables in <code>misc.c</code> live in <code>.bss</code>.
+The C standard requires them to be zero on entry:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm"><span class="nl">not_relocated</span><span class="err">:</span>
+    <span class="nb">mov</span>     <span class="nv">r0</span><span class="o">,</span> <span class="o">#</span><span class="mi">0</span>
+<span class="nl">1</span><span class="err">:</span>  <span class="nb">str</span>     <span class="nv">r0</span><span class="o">,</span> <span class="o">[</span><span class="nv">r2</span><span class="o">],</span> <span class="o">#</span><span class="mi">4</span>        <span class="no">@</span> <span class="nv">clear</span> <span class="nv">word</span><span class="o">,</span> <span class="nv">advance</span> <span class="nv">pointer</span>
+    <span class="nb">str</span>     <span class="nv">r0</span><span class="o">,</span> <span class="o">[</span><span class="nv">r2</span><span class="o">],</span> <span class="o">#</span><span class="mi">4</span>        <span class="no">@</span> <span class="o">(</span><span class="nv">unrolled</span> <span class="mi">4</span> <span class="nv">stores</span> <span class="nv">per</span> <span class="nv">iteration</span><span class="o">)</span>
+    <span class="nb">str</span>     <span class="nv">r0</span><span class="o">,</span> <span class="o">[</span><span class="nv">r2</span><span class="o">],</span> <span class="o">#</span><span class="mi">4</span>
+    <span class="nb">str</span>     <span class="nv">r0</span><span class="o">,</span> <span class="o">[</span><span class="nv">r2</span><span class="o">],</span> <span class="o">#</span><span class="mi">4</span>
+    <span class="nb">cmp</span>     <span class="nv">r2</span><span class="o">,</span> <span class="nv">r3</span>              <span class="no">@</span> <span class="nv">reached</span> <span class="nv">end</span> <span class="nv">of</span> <span class="nv">BSS</span><span class="o">?</span>
+    <span class="nb">blo</span>     <span class="mi">1</span><span class="nv">b</span></code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_calling_decompress_kernel"><a class="anchor" href="#_calling_decompress_kernel"></a>7.4. Calling decompress_kernel()</h3>
+<div class="paragraph">
+<p>With the C runtime ready, execution calls into <code>misc.c</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm">    <span class="nb">mov</span>     <span class="nv">r0</span><span class="o">,</span> <span class="nv">r4</span>              <span class="no">@</span> <span class="nv">r0</span> <span class="o">=</span> <span class="nv">ZRELADDR</span> <span class="o">(</span><span class="nv">output</span> <span class="nv">start</span> <span class="o">=</span> <span class="mh">0x40208000</span><span class="o">)</span>
+    <span class="nb">mov</span>     <span class="nv">r1</span><span class="o">,</span> <span class="nv">sp</span>              <span class="no">@</span> <span class="nv">r1</span> <span class="o">=</span> <span class="nv">malloc</span> <span class="nv">base</span> <span class="o">(</span><span class="nv">stack</span> <span class="nv">top</span><span class="o">)</span>
+    <span class="nb">add</span>     <span class="nv">r2</span><span class="o">,</span> <span class="nv">sp</span><span class="o">,</span> <span class="o">#</span><span class="nv">MALLOC_SIZE</span> <span class="no">@</span> <span class="nv">r2</span> <span class="o">=</span> <span class="nv">malloc</span> <span class="nv">end</span> <span class="o">(+</span> <span class="mi">64</span> <span class="nv">KiB</span><span class="o">)</span>
+    <span class="nb">mov</span>     <span class="nv">r3</span><span class="o">,</span> <span class="nv">r7</span>              <span class="no">@</span> <span class="nv">r3</span> <span class="o">=</span> <span class="nv">architecture</span> <span class="nv">ID</span>
+    <span class="nb">bl</span>      <span class="nv">decompress_kernel</span>   <span class="no">@</span> <span class="nv">call</span> <span class="nv">into</span> <span class="nv">misc</span><span class="mf">.</span><span class="nv">c</span></code></pre>
+</div>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/decompress-kernel-function.png" alt="Decompress kernel function" width="640">
+</div>
+<div class="title">Figure 36. decompress_kernel() function signature in misc.c</div>
+</div>
+<div class="paragraph">
+<p>The call chain inside <code>misc.c</code>:</p>
+</div>
+<div class="olist arabic">
+<ol class="arabic">
+<li>
+<p><code>decompress_kernel(output, heap_base, heap_end, arch_id, delta)</code></p>
+</li>
+<li>
+<p>→ <code>do_decompress(input_data, input_len, output, error)</code></p>
+</li>
+<li>
+<p>→ <code>__decompress(input, in_len, NULL, NULL, output, 0, NULL, error)</code></p>
+</li>
+<li>
+<p>→ Format-specific decompressor from <code>lib/decompress_*.c</code>
+(gzip, lzma, xz, lzo, lz4 — whichever was selected in Kconfig)</p>
+</li>
+</ol>
+</div>
+<div class="admonitionblock tip">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-tip" title="Tip"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>Enable <code>CONFIG_DEBUG_UNCOMPRESS</code> to print a UART progress banner:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code>Uncompressing Linux... done, booting the kernel.</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>This is the cheapest possible smoke-test that <code>CONFIG_DEBUG_LL</code> and
+<code>DEBUG_UART_PHYS</code> are correctly configured.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>After decompression, ~25.4 MiB of uncompressed kernel code and data is now at
+<code>0x40208000</code>.</p>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/diag-after-decompress.png" alt="After decompress" width="680">
+</div>
+<div class="title">Figure 37. Physical RAM layout after decompress_kernel() returns</div>
+</div>
+<hr>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="enter_kernel"><a class="anchor" href="#enter_kernel"></a>8. Cache Flush, Cache Off, and __enter_kernel</h2>
+<div class="sectionbody">
+<div class="sect2">
+<h3 id="_flush_and_turn_off_caches"><a class="anchor" href="#_flush_and_turn_off_caches"></a>8.1. Flush and Turn Off Caches</h3>
+<div class="paragraph">
+<p>The decompressor flushes the D-cache over the newly-written kernel image (to make
+it coherent for instruction fetch), then disables the MMU and caches as required
+by the ARM booting ABI:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm">    <span class="nf">get_inflated_image_size</span> <span class="nv">r1</span><span class="o">,</span> <span class="nv">r2</span><span class="o">,</span> <span class="nv">r3</span>  <span class="no">@</span> <span class="nv">r1</span> <span class="o">=</span> <span class="nv">end</span> <span class="nv">address</span> <span class="nv">of</span> <span class="nv">inflated</span> <span class="nv">kernel</span>
+    <span class="nb">mov</span>     <span class="nv">r0</span><span class="o">,</span> <span class="nv">r4</span>                      <span class="no">@</span> <span class="nv">r0</span> <span class="o">=</span> <span class="nv">start</span> <span class="o">=</span> <span class="nv">ZRELADDR</span>
+    <span class="nb">bl</span>      <span class="nv">cache_clean_flush</span>           <span class="no">@</span> <span class="nv">flush</span> <span class="nv">D</span><span class="o">-</span><span class="nv">cache</span> <span class="nv">over</span> <span class="nv">entire</span> <span class="nv">kernel</span> <span class="nv">image</span>
+    <span class="nb">bl</span>      <span class="nv">cache_off</span>                   <span class="no">@</span> <span class="nv">disable</span> <span class="nv">MMU</span><span class="o">,</span> <span class="nv">I</span><span class="o">-</span><span class="nv">cache</span><span class="o">,</span> <span class="nv">D</span><span class="o">-</span><span class="nv">cache</span></code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p><code>cache_off</code> selects the correct disable sequence from <code>proc_types</code> based on the
+CPU ID, invalidates TLBs where applicable, and issues DSB/ISB barriers.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_enter_kernel_final_register_restore_and_jump"><a class="anchor" href="#_enter_kernel_final_register_restore_and_jump"></a>8.2. __enter_kernel — Final Register Restore and Jump</h3>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm"><span class="nl">__enter_kernel</span><span class="err">:</span>
+    <span class="nb">mov</span>     <span class="nv">r0</span><span class="o">,</span> <span class="o">#</span><span class="mi">0</span>      <span class="no">@</span> <span class="nv">r0</span> <span class="nv">must</span> <span class="nv">be</span> <span class="mi">0</span> <span class="o">(</span><span class="nv">ARM</span> <span class="nv">boot</span> <span class="nv">ABI</span><span class="o">)</span>
+    <span class="nb">mov</span>     <span class="nv">r1</span><span class="o">,</span> <span class="nv">r7</span>      <span class="no">@</span> <span class="nv">restore</span> <span class="nv">MachID</span> <span class="o">(</span><span class="nv">saved</span> <span class="nv">at</span> <span class="nv">entry</span> <span class="nv">in</span> <span class="nv">Phase</span> <span class="mi">2</span><span class="o">)</span>
+    <span class="nb">mov</span>     <span class="nv">r2</span><span class="o">,</span> <span class="nv">r8</span>      <span class="no">@</span> <span class="nv">restore</span> <span class="nv">DTB</span> <span class="nv">pointer</span> <span class="o">(</span><span class="nv">saved</span> <span class="nv">at</span> <span class="nv">entry</span> <span class="nv">in</span> <span class="nv">Phase</span> <span class="mi">2</span><span class="o">)</span>
+    <span class="nb">mov</span>     <span class="nv">pc</span><span class="o">,</span> <span class="nv">r4</span>      <span class="no">@</span> <span class="nv">jump</span> <span class="nv">to</span> <span class="nv">stext</span> <span class="nv">at</span> <span class="nv">ZRELADDR</span> <span class="o">=</span> <span class="mh">0x40208000</span></code></pre>
+</div>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>At the moment <code>pc = 0x40208000</code>, execution is <strong>identical</strong> to a bootloader
+that loaded the uncompressed <code>vmlinux</code> directly to <code>TEXT_OFFSET</code>.
+The entire decompressor is now irrelevant.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_final_memory_state_at_stext"><a class="anchor" href="#_final_memory_state_at_stext"></a>8.3. Final Memory State at stext</h3>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/diag-after-decompress.png" alt="Final memory state" width="680">
+</div>
+<div class="title">Figure 38. Physical RAM at the moment PC reaches 0x40208000 (stext)</div>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 14.2857%;">
+<col style="width: 28.5714%;">
+<col style="width: 57.1429%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Register</th>
+<th class="tableblock halign-left valign-top">Value</th>
+<th class="tableblock halign-left valign-top">Meaning for vmlinux</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r0</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x00000000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Must be zero — ARM boot ABI requirement</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r1</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0xFFFFFFFF</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Machine ID (ignored by DT kernels, passed through for legacy)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r2</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x48000000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">DTB physical address — parsed by <code>of_scan_flat_dt()</code> in <code>start_kernel</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>pc</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40208000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>stext</code> — first instruction of <code>arch/arm/kernel/head.S</code></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="sect2">
+<h3 id="_what_happens_in_vmlinux_stext"><a class="anchor" href="#_what_happens_in_vmlinux_stext"></a>8.4. What Happens in vmlinux (stext)</h3>
+<div class="paragraph">
+<p>The uncompressed kernel&#8217;s <code>arch/arm/kernel/head.S</code> takes over:</p>
+</div>
+<div class="olist arabic">
+<ol class="arabic">
+<li>
+<p>Enable the MMU and set up initial page tables at <code>ZRELADDR - 0x4000</code>.</p>
+</li>
+<li>
+<p>Call <code>__mmap_switched</code>: copy <code>.data</code> from ROM if needed, clear BSS, set up stack.</p>
+</li>
+<li>
+<p>Call <code>start_kernel()</code> in <code>init/main.c</code> — printk, scheduler, drivers, filesystems.</p>
+</li>
+</ol>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>The appended DTB (<code>ARM_APPENDED_DTB</code>) and ATAGs processing code lives <strong>only</strong> in
+the compressed decompressor (<code>head.S</code>).  The <code>vmlinux</code> <code>stext</code> does not look for
+appended DTBs.  If you need this feature you must use a compressed kernel.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_vmlinux_symbols_in_gdb"><a class="anchor" href="#_vmlinux_symbols_in_gdb"></a>8.5. vmlinux Symbols in GDB</h3>
+<div class="paragraph">
+<p>To continue tracing into the real kernel, load the uncompressed <code>vmlinux</code> symbols
+at <code>TEXT_OFFSET</code>:</p>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/load-symbols-vmlinux.png" alt="Load symbols" width="640">
+</div>
+<div class="title">Figure 39. Loading vmlinux symbols at the correct address for GDB</div>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/gdb-vmlinux-symbols.png" alt="GDB vmlinux symbols" width="640">
+</div>
+<div class="title">Figure 40. GDB showing vmlinux symbols resolved — stext, __irq_svc, etc.</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code>(gdb) add-symbol-file vmlinux 0x40208000
+(gdb) break start_kernel
+(gdb) continue</code></pre>
+</div>
+</div>
+<hr>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_debugging_techniques"><a class="anchor" href="#_debugging_techniques"></a>9. Debugging Techniques</h2>
+<div class="sectionbody">
+<div class="sect2">
+<h3 id="_qemu_gdb_setup"><a class="anchor" href="#_qemu_gdb_setup"></a>9.1. QEMU + GDB Setup</h3>
+<div class="paragraph">
+<p>The most effective way to trace the decompressor is QEMU + GDB with the
+compressed vmlinux symbol file:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash"><span class="c"># Terminal 1: Start QEMU with GDB stub</span>
+qemu-system-arm <span class="se">\</span>
+    <span class="nt">-M</span>      versatilepb          <span class="se">\</span>
+    <span class="nt">-kernel</span> <span class="nb">arch</span>/arm/boot/zImage <span class="se">\</span>
+    <span class="nt">-dtb</span>    board.dtb            <span class="se">\</span>
+    <span class="nt">-S</span>                           <span class="se">\ </span> <span class="c"># freeze CPU at startup</span>
+    <span class="nt">-s</span>                              <span class="c"># GDB server on :1234</span>
+
+<span class="c"># Terminal 2: Connect GDB</span>
+arm-poky-linux-gnueabi-gdb
+<span class="o">(</span>gdb<span class="o">)</span> target remote :1234
+<span class="o">(</span>gdb<span class="o">)</span> add-symbol-file <span class="nb">arch</span>/arm/boot/compressed/vmlinux 0x40010000
+<span class="o">(</span>gdb<span class="o">)</span> <span class="nb">break</span> <span class="k">*</span>0x40010000
+<span class="o">(</span>gdb<span class="o">)</span> <span class="k">continue</span>
+
+<span class="c"># Once inside the decompressor — load kernel symbols too</span>
+<span class="o">(</span>gdb<span class="o">)</span> add-symbol-file vmlinux 0x40208000</code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_config_debug_uncompress"><a class="anchor" href="#_config_debug_uncompress"></a>9.2. CONFIG_DEBUG_UNCOMPRESS</h3>
+<div class="paragraph">
+<p>Enables a simple progress message via the UART.
+Requires <code>CONFIG_DEBUG_LL</code> and a correct <code>DEBUG_UART_PHYS</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="kconfig">CONFIG_DEBUG_LL=y
+CONFIG_DEBUG_UNCOMPRESS=y</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Output on UART:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code>Uncompressing Linux... done, booting the kernel.</code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_enabling_ddebug_in_head_s"><a class="anchor" href="#_enabling_ddebug_in_head_s"></a>9.3. Enabling -DDEBUG in head.S</h3>
+<div class="paragraph">
+<p>For deeper tracing, enable the <code>DEBUG</code> define to activate <code>dbgkc</code> and <code>dbgadtb</code>
+macros which print relocation and DTB addresses over the UART:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="makefile"><span class="c"># In arch/arm/boot/compressed/Makefile:
+</span><span class="nv">AFLAGS_head.o</span> <span class="o">+=</span> <span class="nt">-DTEXT_OFFSET</span><span class="o">=</span><span class="p">$(</span>TEXT_OFFSET<span class="p">)</span> <span class="nt">-DDEBUG</span></code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Example UART output when relocation occurs:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code>C:0x403080C0-0x40DF0CC0-&gt;0x41801D00-0x422EA900</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Reading the output: <code>C:src_start-src_end&#8594;dst_start-dst_end</code> — the compressed
+kernel was copied from <code>0x40308000</code> to <code>0x41801D00</code> before decompression.</p>
+</div>
+<div class="paragraph">
+<p>If <code>CONFIG_ARM_APPENDED_DTB</code> is also set, the <code>dbgadtb</code> macro prints:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code>DTB:0x40DEBA68 (0x00004200)</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Format: <code>DTB:start_address (size)</code>.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_useful_gdb_commands"><a class="anchor" href="#_useful_gdb_commands"></a>9.4. Useful GDB Commands</h3>
+<table class="tableblock frame-all grid-all" style="width: 90%;">
+<colgroup>
+<col style="width: 33.3333%;">
+<col style="width: 66.6667%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Command</th>
+<th class="tableblock halign-left valign-top">What It Reveals</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>info registers</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Full register dump at any point</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>x/16wx 0x40010000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Dump first 16 words of zImage (NOP sled + magic)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>x/4wx 0x48000000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Inspect DTB header — first word should be <code>0xEDFE0DD0</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>x/wx 0x40A09CA8</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Read <code>_edata</code> value</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>stepi</code> / <code>nexti</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Single-step ARM instructions</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>break wont_overwrite</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Stop at the safe decompression entry point</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>break decompress_kernel</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Stop just before the C decompressor runs</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>break __enter_kernel</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Stop at the final kernel handoff</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>disas /r restart, +64</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Disassemble <code>restart:</code> with hex bytes</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>info symbol 0x40010000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Resolve an address to a symbol name</p></td>
+</tr>
+</tbody>
+</table>
+<hr>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_summary_complete_boot_phase_reference"><a class="anchor" href="#_summary_complete_boot_phase_reference"></a>10. Summary: Complete Boot Phase Reference</h2>
+<div class="sectionbody">
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/diag-boot-overview.png" alt="Boot overview" width="740">
+</div>
+<div class="title">Figure 41. Complete ARM32 compressed kernel boot sequence — all phases</div>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 12.5%;">
+<col style="width: 25%;">
+<col style="width: 37.5%;">
+<col style="width: 25%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Phase</th>
+<th class="tableblock halign-left valign-top">Code Location</th>
+<th class="tableblock halign-left valign-top">Action</th>
+<th class="tableblock halign-left valign-top">Key Registers / Addresses</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1. Bootloader</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">U-Boot / EFI</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Load <code>zImage</code> to RAM, set <code>r0/r1/r2</code>, jump to entry</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r0=0</code>, <code>r1=MachID</code>, <code>r2=DTB</code>, <code>pc=0x40010000</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">2. NOP sled</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>head.S start:</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">8 NOPs for legacy <code>a.out</code> skip; magic words for loader</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>pc=0x40010000</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">3. Save ATAGS</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>head.S</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r1→r7</code> (MachID), <code>r2→r8</code> (DTB ptr)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r7</code>, <code>r8</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">4. SVC mode</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>head.S safe_svcmode_maskall</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Force SVC, mask IRQ/FIQ, save CPSR to SPSR</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>CPSR=0x1D3</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">5. Find RAM base</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>head.S AUTO_ZRELADDR</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r0 = pc &amp; 0xF8000000 = 0x40000000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r0=0x40000000</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">6. Compute ZRELADDR</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>head.S</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r4 = r0 + TEXT_OFFSET = 0x40208000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r4=0x40208000</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">7. Cache on</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>head.S cache_on</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1:1 page table at <code>r4−16K</code>; enable I+D cache</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r3=page table base</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">8. Stack + malloc</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>head.S restart:</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>sp = 0x40A0ACC0</code>; <code>r10 = sp+64K = 0x40A1ACC0</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>sp</code>, <code>r6</code>, <code>r10</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">9. DTB check</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>head.S</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Look for <code>0xD00DFEED</code> at <code>_edata</code>; not present here</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r5=0</code> (no appended DTB)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">10. Overwrite checks A+B</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>head.S</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Both fail — kernel destination overlaps decompressor</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r4=0x40208001</code>, <code>r10=0x40A1ECC0</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">11. Self-relocate</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>head.S</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Copy <code>restart…_edata</code> backwards to <code>0x41B7A600</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r5</code>, <code>r6</code>, <code>r9</code>, <code>r10</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">12. GOT + BSS</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>head.S wont_overwrite:</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Patch GOT entries with delta; zero <code>.bss</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r0=delta</code>, <code>r11</code>–<code>r12</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">13. Decompress</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>misc.c decompress_kernel()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Inflate <code>piggydata</code> → <code>0x40208000</code> (~25.4 MiB)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r4=output</code>, <code>r1=malloc base</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">14. Cache flush + off</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>head.S</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Flush D-cache over kernel image; disable MMU/caches</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">—</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">15. Enter kernel</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>head.S __enter_kernel</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Restore <code>r0=0</code>, <code>r1=MachID</code>, <code>r2=DTB</code>; <code>mov pc, r4</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>pc=0x40208000</code> (<code>stext</code>)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">16. vmlinux startup</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>arch/arm/kernel/head.S stext</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Enable MMU, set up page tables, → <code>start_kernel()</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">—</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+<div id="footer">
+<div id="footer-text">
+Last updated 2026-03-22 10:38:55 -0400
+</div>
+</div>
+</body>
+</html>
