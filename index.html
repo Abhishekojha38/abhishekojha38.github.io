@@ -555,13 +555,13 @@
                 </div>
                 <div class="post-card__body">
                     <span class="post-card__tag">PCIe · Fundamentals</span>
-                    <h3 class="post-card__title">Getting Started with PCIe</h3>
+                    <h3 class="post-card__title">Getting Started with PCIe (A Practical Beginner’s Guide)</h3>
                     <p class="post-card__excerpt">
                         A practical beginner's guide to PCI Express: topology, lanes, link training,
                         configuration space, ECAM, BARs, and TLP packet structure.
                     </p>
                     <div class="post-card__meta">
-                        <span class="post-card__date">March 22, 2026</span>
+                        <span class="post-card__date">March 28, 2026</span>
                         <span class="post-card__link" aria-hidden="true">
                             Read
                             <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="none"
@@ -575,8 +575,8 @@
 
             <!-- Part 1: Boot Process -->
             <article class="post-card fade-in">
-                <a class="post-card__overlay" href="blogs/part1:-understanding-linux-boot-process.html"
-                    aria-label="Read Part 1: Understanding Linux Boot Process"></a>
+                <a class="post-card__overlay" href="blogs/part-1:-linux-kernel-early-boot.html"
+                    aria-label="Read Part 1: Linux Kernel Early Boot"></a>
                 <div class="post-card__icon-wrap" style="background: linear-gradient(135deg, #1e1e1e 0%, #2b2b2b 100%);">
                     <svg class="post-card__icon" viewBox="0 0 64 64" fill="none"
                         xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -588,12 +588,12 @@
                 </div>
                 <div class="post-card__body">
                     <span class="post-card__tag" style="background: #e6f4ea; color: #1e8e3e;">Linux · Boot Process</span>
-                    <h3 class="post-card__title">Part 1: Understanding Linux Boot Process</h3>
+                    <h3 class="post-card__title">Part 1: Linux Kernel Early Boot</h3>
                     <p class="post-card__excerpt">
                         A comprehensive overview of how the Linux kernel boots locally, covering the zImage build pipeline, memory layout, and decompression.
                     </p>
                     <div class="post-card__meta">
-                        <span class="post-card__date">March 2026</span>
+                        <span class="post-card__date">March 28, 2026</span>
                         <span class="post-card__link" aria-hidden="true">
                             Read
                             <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="none"
@@ -607,8 +607,8 @@
 
             <!-- Part 2: ARM Startup -->
             <article class="post-card fade-in">
-                <a class="post-card__overlay" href="blogs/part2:-arm-kernel-startup.html"
-                    aria-label="Read Part 2: ARM Kernel Startup"></a>
+                <a class="post-card__overlay" href="blogs/part-2:-linux-kernel-early-boot(setup-mmu).html"
+                    aria-label="Read Part 2: Linux Kernel Early Boot (setup MMU)"></a>
                 <div class="post-card__icon-wrap" style="background: linear-gradient(135deg, #1c1c1e 0%, #29292c 100%);">
                     <svg class="post-card__icon" viewBox="0 0 64 64" fill="none"
                         xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -620,12 +620,43 @@
                 </div>
                 <div class="post-card__body">
                     <span class="post-card__tag" style="background: #fce8e6; color: #d93025;">ARM · Kernel</span>
-                    <h3 class="post-card__title">Part 2: ARM Kernel Startup</h3>
+                    <h3 class="post-card__title">Part 2: Linux Kernel Early Boot (setup MMU)</h3>
                     <p class="post-card__excerpt">
                         Diving deep into the ARM kernel startup sequence, understanding stext, ATAGs, and physical memory mapping up to start_kernel.
                     </p>
                     <div class="post-card__meta">
-                        <span class="post-card__date">March 2026</span>
+                        <span class="post-card__date">March 28, 2026</span>
+                        <span class="post-card__link" aria-hidden="true">
+                            Read
+                            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="none"
+                                viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+                            </svg>
+                        </span>
+                    </div>
+                </div>
+            </article>
+
+            <!-- Part 3: Decompress and Start Kernel -->
+            <article class="post-card fade-in">
+                <a class="post-card__overlay" href="blogs/part-3:-linux-kernel-early-boot(decompress-and-start-kernel).html"
+                    aria-label="Read Part 3: Linux Kernel Early Boot(decompress and start kernel)"></a>
+                <div class="post-card__icon-wrap" style="background: linear-gradient(135deg, #1f1c2c 0%, #928dab 100%);">
+                    <svg class="post-card__icon" viewBox="0 0 64 64" fill="none"
+                        xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                        <rect x="10" y="10" width="44" height="44" rx="6" stroke="#9b59b6" stroke-width="2.5" fill="none" />
+                        <rect x="18" y="18" width="28" height="28" rx="3" fill="#9b59b6" fill-opacity="0.15" stroke="#9b59b6" stroke-width="1.5" />
+                        <path d="M26 32h12M32 26v12" stroke="#9b59b6" stroke-width="2" stroke-linecap="round" />
+                    </svg>
+                </div>
+                <div class="post-card__body">
+                    <span class="post-card__tag" style="background: #f4e8f9; color: #8e44ad;">Linux · Kernel</span>
+                    <h3 class="post-card__title">Part 3: Linux Kernel Early Boot(decompress and start kernel)</h3>
+                    <p class="post-card__excerpt">
+                        The final stage of early boot: relocating, decompressing the payload out of zImage, and transferring control to the uncompressed vmlinux.
+                    </p>
+                    <div class="post-card__meta">
+                        <span class="post-card__date">March 28, 2026</span>
                         <span class="post-card__link" aria-hidden="true">
                             Read
                             <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="none"

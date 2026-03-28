@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="generator" content="Asciidoctor 2.0.26">
+<title>Part 3: Linux Kernel Early Boot(decompress and start kernel)</title>
+<link rel="stylesheet" href="../assets/apple-theme.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+<link rel="stylesheet" href="../assets/rouge-base16.dark.css">
+</head>
+<nav class="apple-nav"><a href="../index.html"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>Home</a><span class="sep">›</span><span class="current">Part 3: Linux-Kernel-Early-Boot(decompress and start kernel)</span></nav>
+<body class="article toc2 toc-left">
+<div id="header">
+<h1>Part 3: Linux Kernel Early Boot(decompress and start kernel)</h1>
+<div id="toc" class="toc2">
+<div id="toctitle">Table of Contents</div>
+<ul class="sectlevel1">
+<li><a href="#_calling_decompress_kernel">1. Calling decompress_kernel()</a></li>
+<li><a href="#enter_kernel">2. Cache Flush, Cache Off, and __enter_kernel</a>
+<ul class="sectlevel2">
+<li><a href="#_flush_and_turn_off_caches">2.1. Flush and Turn Off Caches</a></li>
+<li><a href="#_cache_clean_flush_cache_off">2.2. cache_clean_flush() &amp; cache_off()</a></li>
+<li><a href="#_enter_kernel_final_register_restore_and_jump">2.3. __enter_kernel — Final Register Restore and Jump</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+<div id="content">
+<div class="sect1">
+<h2 id="_calling_decompress_kernel"><a class="anchor" href="#_calling_decompress_kernel"></a>1. Calling decompress_kernel()</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>we call the decompress_kernel() symbol in boot/compressed/misc.c which in turn calls do_decompress() which calls __decompress() which will perform the actual decompression.</p>
+</div>
+<div class="paragraph">
+<p>This is implemented in C and the type of decompression is different depending on Kconfig options: the same decompressor as the compression selected when building the kernel will be linked into the image and executed from physical memory. All architectures share the same decompression library. The <em>_decompress() function called will depend on which of the decompressors in lib/decompress</em>*.c that was linked into the image. The selection of decompressor happens in arch/arm/boot/compressed/decompress.c by simply including the whole decompressor into the file.</p>
+</div>
+<div class="paragraph">
+<p>All the variables the decompressor needs about the location of the compressed kernel are set up in the registers before calling the decompressor.</p>
+</div>
+<div class="paragraph">
+<p>With the C runtime ready, execution calls into <code>misc.c</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm">    <span class="nb">mov</span>     <span class="nv">r0</span><span class="o">,</span> <span class="nv">r4</span>              <span class="no">@</span> <span class="nv">r0</span> <span class="o">=</span> <span class="nv">ZRELADDR</span> <span class="o">(</span><span class="nv">output</span> <span class="nv">start</span> <span class="o">=</span> <span class="mh">0x40208000</span><span class="o">)</span>
+    <span class="nb">mov</span>     <span class="nv">r1</span><span class="o">,</span> <span class="nv">sp</span>              <span class="no">@</span> <span class="nv">r1</span> <span class="o">=</span> <span class="nv">malloc</span> <span class="nv">base</span> <span class="o">(</span><span class="nv">stack</span> <span class="nv">top</span><span class="o">)</span>
+    <span class="nb">add</span>     <span class="nv">r2</span><span class="o">,</span> <span class="nv">sp</span><span class="o">,</span> <span class="o">#</span><span class="nv">MALLOC_SIZE</span> <span class="no">@</span> <span class="nv">r2</span> <span class="o">=</span> <span class="nv">malloc</span> <span class="nv">end</span> <span class="o">(+</span> <span class="mi">64</span> <span class="nv">KiB</span><span class="o">)</span>
+    <span class="nb">mov</span>     <span class="nv">r3</span><span class="o">,</span> <span class="nv">r7</span>              <span class="no">@</span> <span class="nv">r3</span> <span class="o">=</span> <span class="nv">architecture</span> <span class="nv">ID</span>
+    <span class="nb">bl</span>      <span class="nv">decompress_kernel</span>   <span class="no">@</span> <span class="nv">call</span> <span class="nv">into</span> <span class="nv">misc</span><span class="mf">.</span><span class="nv">c</span></code></pre>
+</div>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/decompress-kernel-function.png" alt="Decompress kernel function" width="640">
+</div>
+<div class="title">Figure 1. decompress_kernel() function signature in misc.c</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="gdb">(gdb) si
+634     in /usr/src/kernel/arch/arm/boot/compressed/head.S
+1: x/10i $pc
+=&gt; 0x41c7bf78 &lt;not_relocated+56&gt;:       bl      0x41c7c6c4 &lt;decompress_kernel&gt;
+   0x41c7bf7c &lt;not_relocated+60&gt;:       add     r1, pc, #120    @ 0x78
+   0x41c7bf80 &lt;not_relocated+64&gt;:       ldr     r2, [r1]
+(gdb)</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The call chain inside <code>misc.c</code>:</p>
+</div>
+<div class="olist arabic">
+<ol class="arabic">
+<li>
+<p><code>decompress_kernel(output, heap_base, heap_end, arch_id, delta)</code></p>
+</li>
+<li>
+<p>→ <code>do_decompress(input_data, input_len, output, error)</code></p>
+</li>
+<li>
+<p>→ <code>__decompress(input, in_len, NULL, NULL, output, 0, NULL, error)</code></p>
+</li>
+<li>
+<p>→ Format-specific decompressor from <code>lib/decompress_*.c</code>
+(gzip, lzma, xz, lzo, lz4 — whichever was selected in Kconfig)</p>
+</li>
+</ol>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="gdb">(gdb)
+decompress_kernel (output_start=1075871744, free_mem_ptr_p=1114323784,
+    free_mem_ptr_end_p=1114389320, arch_id=-1)
+    at /usr/src/kernel/arch/arm/boot/compressed/misc.c:138
+warning: 138    /usr/src/kernel/arch/arm/boot/compressed/misc.c: No such file or directory
+1: x/10i $pc
+=&gt; 0x41c7c6c4 &lt;decompress_kernel&gt;:
+    ldr r12, [pc, #168] @ 0x41c7c774 &lt;decompress_kernel+176&gt;
+   0x41c7c6c8 &lt;decompress_kernel+4&gt;:    push    {lr}            @ (str lr, [sp, #-4]!)
+(gdb)</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>__gunzip()</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="gdb">(gdb)
+__gunzip (fill=0x0, flush=0x0, out_len=-1075871745, pos=0x0, buf=0x41c82e6c "\037\213\b",
+    len=10681486,
+    out_buf=0x40208000 "\036\231;?DWX\310;+\372ۏp\336X+\373\3751\026\2034m,lq\350W]s\237\r\034
+\262$\374\271Θ\261,\231b\003_:\263/O\203uӥR\316/J\371\336qW~{\233\370\005j\314\342KOl\023/W\32
+7\355\245}6\361\350R\251\313e\323\370m\021\a\2224\357\214\337S_$\222~\226_\306d\236]\245\221\0
+17;h\354'ɱ\233r\314\330\301\277\353Ŀ\246憦\261l\335\312v\n\310\v\021q \031\343:\202\366\262\26
+5B\332C\271&gt;\004\366\262\260\324m\032c\222g\202/\001\367\024\270G\351\320o\306=M\3633#֟yh\275U\
+251b\337\377pu\037\037\334r\365\261\376\244", &lt;incomplete sequence \315&gt;...,
+    error=0x41c7c670 &lt;error&gt;) at /usr/src/kernel/lib/decompress_inflate.c:60
+warning: 60     /usr/src/kernel/lib/decompress_inflate.c: No such file or directory
+1: x/10i $pc
+=&gt; 0x41c7ed28 &lt;do_decompress+20&gt;:       bne     0x41c7ed40 &lt;do_decompress+44&gt;
+   0x41c7ed2c &lt;do_decompress+24&gt;:
+    ldr r0, [pc, #620]  @ 0x41c7efa0 &lt;do_decompress+652&gt;
+   0x41c7ed30 &lt;do_decompress+28&gt;:       add     r0, pc, r0
+   0x41c7ed34 &lt;do_decompress+32&gt;:       blx     r3
+   0x41c7ed38 &lt;do_decompress+36&gt;:       mvn     r6, #0
+   0x41c7ed3c &lt;do_decompress+40&gt;:       b       0x41c7ef94 &lt;do_decompress+640&gt;
+   0x41c7ed40 &lt;do_decompress+44&gt;:       cmp     r0, #0
+   0x41c7ed44 &lt;do_decompress+48&gt;:       mov     r5, r0
+   0x41c7ed48 &lt;do_decompress+52&gt;:       movne   r6, r1
+   0x41c7ed4c &lt;do_decompress+56&gt;:       movne   r10, r0
+(gdb)</code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="gdb">(gdb)
+0x41c7d4e4      66      in /usr/src/kernel/lib/zlib_inflate/inflate.c
+1: x/10i $pc
+=&gt; 0x41c7d4e4 &lt;zlib_inflateInit2+12&gt;:   ldr     r2, [r0, #32]
+   0x41c7d4e8 &lt;zlib_inflateInit2+16&gt;:   cmp     r1, r3
+   0x41c7d4ec &lt;zlib_inflateInit2+20&gt;:   str     r3, [r0, #24]
+   0x41c7d4f0 &lt;zlib_inflateInit2+24&gt;:   rsblt   r1, r1, #0
+   0x41c7d4f4 &lt;zlib_inflateInit2+28&gt;:   asrge   r3, r1, #4
+   0x41c7d4f8 &lt;zlib_inflateInit2+32&gt;:   sub     r12, r1, #8
+   0x41c7d4fc &lt;zlib_inflateInit2+36&gt;:   addge   r3, r3, #1
+   0x41c7d500 &lt;zlib_inflateInit2+40&gt;:   str     r2, [r0, #28]
+   0x41c7d504 &lt;zlib_inflateInit2+44&gt;:   cmp     r12, #7
+   0x41c7d508 &lt;zlib_inflateInit2+48&gt;:   str     r3, [r2, #8]
+(gdb)</code></pre>
+</div>
+</div>
+<div class="admonitionblock tip">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-tip" title="Tip"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>Enable <code>CONFIG_DEBUG_UNCOMPRESS</code> to print a UART progress banner:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code>Uncompressing Linux... done, booting the kernel.</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>This is the cheapest possible smoke-test that <code>CONFIG_DEBUG_LL</code> and
+<code>DEBUG_UART_PHYS</code> are correctly configured.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<div class="paragraph">
+<p>After decompression, ~25.4 MiB of uncompressed kernel code and data is now at
+<code>0x40208000</code>.</p>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/diag-after-decompress.png" alt="After decompress" width="680">
+</div>
+<div class="title">Figure 2. Physical RAM layout after decompress_kernel() returns</div>
+</div>
+<hr>
+</div>
+</div>
+<div class="sect1">
+<h2 id="enter_kernel"><a class="anchor" href="#enter_kernel"></a>2. Cache Flush, Cache Off, and __enter_kernel</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>We then jump to the symbol __enter_kernel which sets r0, r1 and r2 as the boot loader would have left them, unless we have an attached device tree blob, in which case r2 now points to that DTB. We then set the program counter to the start of the kernel, which will be the start  of physical memory plus TEXT_OFFSET, typically 0x00008000 on a very conventional system, maybe 0x20008000 on some Qualcomm systems.</p>
+</div>
+<div class="paragraph">
+<p>We are now at the same point as if we had loaded an uncompressed kernel, the vmlinux file, into memory at TEXT_OFFSET, passing (typically) a device tree in r2.</p>
+</div>
+<div class="sect2">
+<h3 id="_flush_and_turn_off_caches"><a class="anchor" href="#_flush_and_turn_off_caches"></a>2.1. Flush and Turn Off Caches</h3>
+<div class="paragraph">
+<p>The decompressor flushes the D-cache over the newly-written kernel image (to make
+it coherent for instruction fetch), then disables the MMU and caches as required
+by the ARM booting ABI:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm">    <span class="nf">get_inflated_image_size</span> <span class="nv">r1</span><span class="o">,</span> <span class="nv">r2</span><span class="o">,</span> <span class="nv">r3</span>  <span class="no">@</span> <span class="nv">r1</span> <span class="o">=</span> <span class="nv">end</span> <span class="nv">address</span> <span class="nv">of</span> <span class="nv">inflated</span> <span class="nv">kernel</span>
+    <span class="nb">mov</span>     <span class="nv">r0</span><span class="o">,</span> <span class="nv">r4</span>                      <span class="no">@</span> <span class="nv">r0</span> <span class="o">=</span> <span class="nv">start</span> <span class="o">=</span> <span class="nv">ZRELADDR</span>
+    <span class="nb">bl</span>      <span class="nv">cache_clean_flush</span>           <span class="no">@</span> <span class="nv">flush</span> <span class="nv">D</span><span class="o">-</span><span class="nv">cache</span> <span class="nv">over</span> <span class="nv">entire</span> <span class="nv">kernel</span> <span class="nv">image</span>
+    <span class="nb">bl</span>      <span class="nv">cache_off</span>                   <span class="no">@</span> <span class="nv">disable</span> <span class="nv">MMU</span><span class="o">,</span> <span class="nv">I</span><span class="o">-</span><span class="nv">cache</span><span class="o">,</span> <span class="nv">D</span><span class="o">-</span><span class="nv">cache</span></code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="gdb">638     in /usr/src/kernel/arch/arm/boot/compressed/head.S
+1: x/10i $pc
+=&gt; 0x41c7bfa4 &lt;not_relocated+100&gt;:      mov     r0, r4
+   0x41c7bfa8 &lt;not_relocated+104&gt;:      add     r1, r1, r0
+   0x41c7bfac &lt;not_relocated+108&gt;:      bl      0x41c7c480 &lt;cache_clean_flush&gt;
+   0x41c7bfb0 &lt;not_relocated+112&gt;:      bl      0x41c7c400 &lt;cache_off&gt;
+   0x41c7bfb4 &lt;not_relocated+116&gt;:      mrs     r0, SPSR
+   0x41c7bfb8 &lt;not_relocated+120&gt;:      and     r0, r0, #31
+   0x41c7bfbc &lt;not_relocated+124&gt;:      cmp     r0, #26
+   0x41c7bfc0 &lt;not_relocated+128&gt;:      bne     0x41c7c660 &lt;__enter_kernel&gt;
+   0x41c7bfc4 &lt;not_relocated+132&gt;:      movw    r0, #1644       @ 0x66c
+   0x41c7bfc8 &lt;not_relocated+136&gt;:      movt    r0, #0</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p><code>cache_off</code> selects the correct disable sequence from <code>proc_types</code> based on the
+CPU ID, invalidates TLBs where applicable, and issues DSB/ISB barriers.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="gdb">=&gt; 0x41c7bfb4 &lt;not_relocated+116&gt;:      mrs     r0, SPSR
+   0x41c7bfb8 &lt;not_relocated+120&gt;:      and     r0, r0, #31
+   0x41c7bfbc &lt;not_relocated+124&gt;:      cmp     r0, #26
+   0x41c7bfc0 &lt;not_relocated+128&gt;:      bne     0x41c7c660 &lt;__enter_kernel&gt;
+(gdb)</code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="gdb">(gdb)
+not_relocated () at /usr/src/kernel/arch/arm/boot/compressed/head.S:644
+644     in /usr/src/kernel/arch/arm/boot/compressed/head.S
+1: x/10i $pc
+=&gt; 0x41c7bfb4 &lt;not_relocated+116&gt;:      mrs     r0, SPSR
+   0x41c7bfb8 &lt;not_relocated+120&gt;:      and     r0, r0, #31
+   0x41c7bfbc &lt;not_relocated+124&gt;:      cmp     r0, #26
+   0x41c7bfc0 &lt;not_relocated+128&gt;:      bne     0x41c7c660 &lt;__enter_kernel&gt;
+   0x41c7bfc4 &lt;not_relocated+132&gt;:      movw    r0, #1644       @ 0x66c
+   0x41c7bfc8 &lt;not_relocated+136&gt;:      movt    r0, #0
+   0x41c7bfcc &lt;not_relocated+140&gt;:      add     r0, r0, pc
+   0x41c7bfd0 &lt;not_relocated+144&gt;:      bl      0x41c7f308 &lt;__hyp_set_vectors&gt;
+   0x41c7bfd4 &lt;not_relocated+148&gt;:      hvc     0
+   0x41c7bfd8 &lt;not_relocated+152&gt;:      b       0x41c7bfd8 &lt;not_relocated+152&gt;
+(gdb)
+^C
+Thread 4 received signal SIGINT, Interrupt.
+[Switching to Thread 1.4]
+0xc031a308 in ?? ()
+1: x/10i $pc
+=&gt; 0xc031a308:  bx      lr
+   0xc031a30c:  nop     {0}
+   0xc031a310:  bx      lr
+   0xc031a314:  mrc     15, 0, r3, cr0, cr0, {1}
+   0xc031a318:  lsr     r3, r3, #16
+   0xc031a31c:  and     r3, r3, #15
+   0xc031a320:  mov     r2, #4
+   0xc031a324:  lsl     r2, r2, r3
+   0xc031a328:  mcr     15, 0, r0, cr7, cr10, {1}
+   0xc031a32c:  add     r0, r0, r2
+(gdb)</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>After the decompressor has finished, the kernel image is decompressed in RAM at <code>ZRELADDR</code> (typically <code>0x40208000</code>). Flow of execution is as follows:</p>
+</div>
+<div class="olist arabic">
+<ol class="arabic">
+<li>
+<p>cache_clean_flush()</p>
+</li>
+<li>
+<p>cache_off()</p>
+</li>
+<li>
+<p>__enter_kernel()</p>
+</li>
+</ol>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="gdb">(gdb)
+640     in /usr/src/kernel/arch/arm/boot/compressed/head.S
+1: x/10i $pc
+=&gt; 0x41c7bfac &lt;not_relocated+108&gt;:      bl      0x41c7c480 &lt;cache_clean_flush&gt;
+   0x41c7bfb0 &lt;not_relocated+112&gt;:      bl      0x41c7c400 &lt;cache_off&gt;
+   0x41c7bfb4 &lt;not_relocated+116&gt;:      mrs     r0, SPSR
+   0x41c7bfb8 &lt;not_relocated+120&gt;:      and     r0, r0, #31
+   0x41c7bfbc &lt;not_relocated+124&gt;:      cmp     r0, #26
+   0x41c7bfc0 &lt;not_relocated+128&gt;:      bne     0x41c7c660 &lt;__enter_kernel&gt;
+   0x41c7bfc4 &lt;not_relocated+132&gt;:      movw    r0, #1644       @ 0x66c
+   0x41c7bfc8 &lt;not_relocated+136&gt;:      movt    r0, #0
+   0x41c7bfcc &lt;not_relocated+140&gt;:      add     r0, r0, pc
+   0x41c7bfd0 &lt;not_relocated+144&gt;:      bl      0x41c7f308 &lt;__hyp_set_vectors&gt;
+(gdb)</code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_cache_clean_flush_cache_off"><a class="anchor" href="#_cache_clean_flush_cache_off"></a>2.2. cache_clean_flush() &amp; cache_off()</h3>
+<div class="paragraph">
+<p>cache_clean_flush() calles the <em>armv7_mmu_cache_flush() and cache_off() calles the </em>armv7_mmu_cache_off() to flush the cache by detecting the CPU type using proc_types.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_enter_kernel_final_register_restore_and_jump"><a class="anchor" href="#_enter_kernel_final_register_restore_and_jump"></a>2.3. __enter_kernel — Final Register Restore and Jump</h3>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm"><span class="err">(</span><span class="nl">gdb</span><span class="err">)</span>
+<span class="nl">__enter_kernel</span> <span class="err">()</span> <span class="nv">at</span> <span class="o">/</span><span class="nv">usr</span><span class="o">/</span><span class="nv">src</span><span class="o">/</span><span class="nv">kernel</span><span class="o">/</span><span class="nv">arch</span><span class="o">/</span><span class="nv">arm</span><span class="o">/</span><span class="nv">boot</span><span class="o">/</span><span class="nv">compressed</span><span class="o">/</span><span class="nv">head</span><span class="mf">.</span><span class="nv">S</span><span class="err">:</span><span class="mi">1435</span>
+<span class="nl">1435</span>    <span class="nb">in</span> <span class="o">/</span><span class="nv">usr</span><span class="o">/</span><span class="nv">src</span><span class="o">/</span><span class="nv">kernel</span><span class="o">/</span><span class="nv">arch</span><span class="o">/</span><span class="nv">arm</span><span class="o">/</span><span class="nv">boot</span><span class="o">/</span><span class="nv">compressed</span><span class="o">/</span><span class="nv">head</span><span class="mf">.</span><span class="nv">S</span>
+<span class="nl">1</span><span class="err">:</span> <span class="nb">x</span><span class="err">/10</span><span class="nb">i</span> <span class="nn">$pc</span>
+<span class="err">=&gt;</span> <span class="err">0</span><span class="nb">x41c7c660</span> <span class="o">&lt;</span><span class="nv">__enter_kernel</span><span class="o">&gt;</span><span class="err">:</span> <span class="nv">mov</span>     <span class="nv">r0</span><span class="o">,</span> <span class="o">#</span><span class="mi">0</span>
+   <span class="err">0</span><span class="nb">x41c7c664</span> <span class="o">&lt;</span><span class="nv">__enter_kernel</span><span class="o">+</span><span class="mi">4</span><span class="o">&gt;</span><span class="err">:</span>       <span class="nv">mov</span>     <span class="nv">r1</span><span class="o">,</span> <span class="nv">r7</span>
+   <span class="err">0</span><span class="nb">x41c7c668</span> <span class="o">&lt;</span><span class="nv">__enter_kernel</span><span class="o">+</span><span class="mi">8</span><span class="o">&gt;</span><span class="err">:</span>       <span class="nv">mov</span>     <span class="nv">r2</span><span class="o">,</span> <span class="nv">r8</span>
+   <span class="err">0</span><span class="nb">x41c7c66c</span> <span class="o">&lt;</span><span class="nv">__enter_kernel</span><span class="o">+</span><span class="mi">12</span><span class="o">&gt;</span><span class="err">:</span>      <span class="nv">mov</span>     <span class="nv">pc</span><span class="o">,</span> <span class="nv">r4</span></code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>move pc,r4 jumps to 0x40208000 which is the start of the uncompressed kernel image.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="gdb">(gdb) info registers r4
+r4             0x40208000          1075871744
+(gdb)</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Enter in the __enter_kernel() function</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="gdb">0x40208000 in ?? ()
+1: x/10i $pc
+=&gt; 0x40208000:  bl      0x40312f60
+   0x40208004:  mrs     r9, CPSR
+   0x40208008:  eor     r9, r9, #26
+   0x4020800c:  tst     r9, #31
+   0x40208010:  bic     r9, r9, #31
+   0x40208014:  orr     r9, r9, #211    @ 0xd3
+   0x40208018:  bne     0x40208030
+   0x4020801c:  orr     r9, r9, #256    @ 0x100
+   0x40208020:  add     lr, pc, #12
+   0x40208024:  msr     SPSR_fsxc, r9</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>It is difficult to debug the kernel code in gdb without debug symbols. So we need to add the debug symbols to the kernel code.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="gdb">(gdb) add-symbol-file build/vmlinux 0x40208000
+add symbol table from file "build/vmlinux" at
+        .text_addr = 0x40208000
+(y or n) y
+Reading symbols from build/vmlinux...
+(gdb) si
+Enable debuginfod for this session? (y or [n]) n
+kmalloc_noprof (size=128, flags=3264) at /usr/src/kernel/include/linux/slab.h:878
+
+This GDB supports auto-downloading debuginfo from the following URLs:
+  &lt;https://debuginfod.ubuntu.com&gt;
+Debuginfod has been disabled.
+To make this setting permanent, add 'set debuginfod enabled off' to .gdbinit.
+warning: 878    /usr/src/kernel/include/linux/slab.h: No such file or directory
+1: x/10i $pc
+=&gt; 0x40312f60 &lt;audit_log_exit+3928&gt;:    mrs     r4, CPSR
+   0x40312f64 &lt;audit_log_exit+3932&gt;:    and     r4, r4, #31
+   0x40312f68 &lt;audit_log_exit+3936&gt;:    movw    r5, #36832      @ 0x8fe0
+   0x40312f6c &lt;audit_log_exit+3940&gt;:    movt    r5, #367        @ 0x16f
+   0x40312f70 &lt;audit_log_exit+3944&gt;:    str     r4, [pc, r5]
+   0x40312f74 &lt;audit_log_exit+3948&gt;:    mrs     r4, CPSR
+   0x40312f78 &lt;audit_log_exit+3952&gt;:    and     r4, r4, #31
+   0x40312f7c &lt;audit_log_exit+3956&gt;:    movw    r6, #36812      @ 0x8fcc
+   0x40312f80 &lt;audit_log_exit+3960&gt;:    movt    r6, #367        @ 0x16f
+   0x40312f84 &lt;audit_log_exit+3964&gt;:    add     r6, r6, pc
+(gdb)</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Here is the start_kernel() function</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="gdb">0xc1900b48 in start_kernel ()
+1: x/10i $pc
+=&gt; 0xc1900b48 &lt;start_kernel+8&gt;: movt    r0, #49568      @ 0xc1a0
+   0xc1900b4c &lt;start_kernel+12&gt;:        sub     sp, sp, #36     @ 0x24
+   0xc1900b50 &lt;start_kernel+16&gt;:        mov     r3, #0
+   0xc1900b54 &lt;start_kernel+20&gt;:        str     r3, [sp, #28]
+   0xc1900b58 &lt;start_kernel+24&gt;:        bl      0xc032c1b4
+   0xc1900b5c &lt;start_kernel+28&gt;:        bl      0xc1904534 &lt;smp_setup_processor_id&gt;
+   0xc1900b60 &lt;start_kernel+32&gt;:        bl      0xc195b168 &lt;init_vmlinux_build_id&gt;
+   0xc1900b64 &lt;start_kernel+36&gt;:        bl      0xc1916d70 &lt;cgroup_init_early&gt;
+   0xc1900b68 &lt;start_kernel+40&gt;:        cpsid   i
+   0xc1900b6c &lt;start_kernel+44&gt;:        movw    r7, #24832      @ 0x6100
+(gdb)</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Now start_kernel() will setup the MMU and other things and boot the kernel.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text">[    0.000000] Booting Linux on physical CPU 0x0
+[    0.000000] Linux version 6.12.56 (oe-user@oe-host) (arm-poky-linux-gnueabi-gcc (GCC) 14.3.0, GNU ld (GNU Binutils) 2.44.0.20250715) #1 SMP PREEMPT Wed Oct 29 13:09:02 UTC 2025
+[    0.000000] CPU: ARMv7 Processor [414fc0f0] revision 0 (ARMv7), cr=10c5387d
+[    0.000000] CPU: div instructions available: patching division code
+[    0.000000] CPU: PIPT / VIPT nonaliasing data cache, PIPT instruction cache</code></pre>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div id="footer">
+<div id="footer-text">
+Last updated 2026-03-28 18:58:04 -0400
+</div>
+</div>
+</body>
+</html>

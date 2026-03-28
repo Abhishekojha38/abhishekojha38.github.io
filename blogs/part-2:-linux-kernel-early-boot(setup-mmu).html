@@ -1,0 +1,1448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="generator" content="Asciidoctor 2.0.26">
+<title>Part 2: Linux Kernel Early Boot (setup MMU)</title>
+<link rel="stylesheet" href="../assets/apple-theme.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+<link rel="stylesheet" href="../assets/rouge-base16.dark.css">
+</head>
+<nav class="apple-nav"><a href="../index.html"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>Home</a><span class="sep">›</span><span class="current">Part 2: Linux-Kernel-Early-Boot(setup-mmu)</span></nav>
+<body class="article toc2 toc-left">
+<div id="header">
+<h1>Part 2: Linux Kernel Early Boot (setup MMU)</h1>
+<div id="toc" class="toc2">
+<div id="toctitle">Table of Contents</div>
+<ul class="sectlevel1">
+<li><a href="#_abbrivations">1. abbrivations</a></li>
+<li><a href="#_linux_page_table_abbreviations">2. Linux Page Table Abbreviations</a></li>
+<li><a href="#_arm32_mmu_concepts">3. ARM32 MMU concepts</a>
+<ul class="sectlevel2">
+<li><a href="#_classic_arm32_paging_setup">3.1. classic ARM32 paging setup</a></li>
+<li><a href="#_lpae_large_physical_address_extension_paging_setup">3.2. LPAE (Large Physical Address Extension) paging setup</a></li>
+<li><a href="#_translation_table">3.3. Translation table</a></li>
+</ul>
+</li>
+<li><a href="#_arm32_boot_context">4. ARM32 boot context</a>
+<ul class="sectlevel2">
+<li><a href="#_where_execution_begins">4.1. Where execution begins</a></li>
+<li><a href="#_virtual_memory_split">4.2. Virtual memory split</a></li>
+<li><a href="#_swapper_pg_dir_the_initial_page_table">4.3. <code>swapper_pg_dir</code> — the initial page table</a></li>
+</ul>
+</li>
+<li><a href="#_setup_mmu">5. __setup_mmu</a></li>
+<li><a href="#_arm32_first_level_descriptor_format">6. ARM32 first-level descriptor format</a>
+<ul class="sectlevel2">
+<li><a href="#_section_descriptor_bit_layout">6.1. Section descriptor bit layout</a></li>
+<li><a href="#_the_two_descriptor_suffixes_seen_in_gdb">6.2. The two descriptor suffixes seen in GDB</a></li>
+</ul>
+</li>
+<li><a href="#_phase_by_phase_analysis">7. Phase-by-phase analysis</a>
+<ul class="sectlevel2">
+<li><a href="#_phase_1_locate_the_page_table_base">7.1. Phase 1 — Locate the page-table base</a></li>
+<li><a href="#_phase_2_compute_the_ram_window">7.2. Phase 2 — Compute the RAM window</a></li>
+<li><a href="#_phase_3_initialise_the_descriptor_template">7.3. Phase 3 — Initialise the descriptor template</a></li>
+<li><a href="#_phase_4_main_mapping_loop">7.4. Phase 4 — Main mapping loop</a>
+<ul class="sectlevel3">
+<li><a href="#_the_dual_purpose_r1_idiom">7.4.1. The dual-purpose <code>r1</code> idiom</a></li>
+<li><a href="#_condition_code_logic">7.4.2. Condition-code logic</a></li>
+</ul>
+</li>
+<li><a href="#_phase_5_flash_execution_context_fixup_epilogue">7.5. Phase 5 — Flash / execution-context fixup (epilogue)</a></li>
+</ul>
+</li>
+<li><a href="#_register_summary_on_entryexit">8. Register summary on entry/exit</a></li>
+<li><a href="#_gdb_trace_observed_page_table_dumps">9. GDB trace — observed page-table dumps</a>
+<ul class="sectlevel2">
+<li><a href="#_early_non_ram_region_0x40204000">9.1. Early non-RAM region (<code>0x40204000</code>)</a></li>
+<li><a href="#_lower_ram_boundary_0x40205000">9.2. Lower RAM boundary (<code>0x40205000</code>)</a>
+<ul class="sectlevel3">
+<li><a href="#_why_the_transition_falls_at_0x40200000_not_r9_0x40204000">9.2.1. Why the transition falls at <code>0x40200000</code>, not <code>r9 = 0x40204000</code></a></li>
+</ul>
+</li>
+<li><a href="#_upper_ram_boundary_0x40205400">9.3. Upper RAM boundary (<code>0x40205400</code>)</a>
+<ul class="sectlevel3">
+<li><a href="#_why_the_transition_falls_at_0x50200000_not_r10_0x50204000">9.3.1. Why the transition falls at <code>0x50200000</code>, not <code>r10 = 0x50204000</code></a></li>
+</ul>
+</li>
+<li><a href="#_rounding_artefact_summary">9.4. Rounding-artefact summary</a></li>
+</ul>
+</li>
+<li><a href="#_full_4_gb_memory_map_post_loop">10. Full 4 GB memory map (post-loop)</a></li>
+<li><a href="#_mmu_enablement_steps_after_setup_mmu_returns">11. MMU enablement — steps after <code>__setup_mmu</code> returns</a>
+<ul class="sectlevel2">
+<li><a href="#_full_sequence">11.1. Full sequence</a></li>
+<li><a href="#_step_by_step_breakdown">11.2. Step-by-step breakdown</a>
+<ul class="sectlevel3">
+<li><a href="#_step_1_drain_the_write_buffer_dsb">11.2.1. Step 1 — Drain the write buffer (DSB)</a></li>
+<li><a href="#_step_2_flush_the_tlbs">11.2.2. Step 2 — Flush the TLBs</a></li>
+<li><a href="#_step_3_configure_sctlr">11.2.3. Step 3 — Configure SCTLR</a></li>
+<li><a href="#_step_4_load_the_mmu_hardware_registers">11.2.4. Step 4 — Load the MMU hardware registers</a></li>
+<li><a href="#_step_5_isb_commit_sctlr_return">11.2.5. Step 5 — ISB + commit SCTLR + return</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><a href="#_end_result">12. End result</a></li>
+</ul>
+</div>
+</div>
+<div id="content">
+<div id="preamble">
+<div class="sectionbody">
+<div class="paragraph">
+<p>In part 1 we discussed the build process and the zImage generation. Also explained the flow of compressed head.S till it relocates itself and again setup the stack, heap and cache using cache_on().</p>
+</div>
+<div class="paragraph">
+<p>In this part 2, we will see how mmu is setup. As this is the important part of the kernel boot process, and also explains how page table works, I will capture details about how page table works and cover arm32 MMU concepts using the qemu based booting process and from the arm developer manual to get the insights of how translation table works.</p>
+</div>
+<div class="paragraph">
+<p>Source:    <a href="https://elixir.bootlin.com/linux/v6.1.128/source/arch/arm/boot/compressed/head.S" class="bare">https://elixir.bootlin.com/linux/v6.1.128/source/arch/arm/boot/compressed/head.S</a></p>
+</div>
+<hr>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_abbrivations"><a class="anchor" href="#_abbrivations"></a>1. abbrivations</h2>
+<div class="sectionbody">
+
+</div>
+</div>
+<div class="sect1">
+<h2 id="_linux_page_table_abbreviations"><a class="anchor" href="#_linux_page_table_abbreviations"></a>2. Linux Page Table Abbreviations</h2>
+<div class="sectionbody">
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 12.5%;">
+<col style="width: 25%;">
+<col style="width: 50%;">
+<col style="width: 12.5%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Abbreviation</th>
+<th class="tableblock halign-left valign-top">Full Form</th>
+<th class="tableblock halign-left valign-top">Description</th>
+<th class="tableblock halign-left valign-top">ARM32 Usage</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">pgd / pgd_t / pgdval_t</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Page Global Directory</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Top-level page table in Linux. Kernel’s main PGD is <code>swapper_pg_dir</code>.</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Yes</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">p4d / p4d_t / p4dval_t</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Page Level 4 Directory</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Added for 5-level paging after <code>pud</code>. Helps generalize hierarchy levels.</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">No</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">pud / pud_t / pudval_t</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Page Upper Directory</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Introduced for 4-level paging abstraction.</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">No</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">pmd / pmd_t / pmdval_t</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Page Middle Directory</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Intermediate level between PGD and PTE.</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Yes</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">pte / pte_t / pteval_t</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Page Table Entry</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Final level entry mapping to physical pages.</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Yes</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">pfn</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Page Frame Number</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Unique number identifying a physical page (e.g., address <code>0x00000000</code> → PFN 0).</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Yes</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_arm32_mmu_concepts"><a class="anchor" href="#_arm32_mmu_concepts"></a>3. ARM32 MMU concepts</h2>
+<div class="sectionbody">
+<div class="ulist">
+<ul>
+<li>
+<p>the ARM32 architecture with a classic MMU has 2 levels of page tables and the more recent LPAE (Large Physical Address Extension) MMU has 3 levels of page tables.</p>
+</li>
+<li>
+<p>On some ARMv7 architectue have LPAE MMU but only conditionally enabled.By default it is disabled and classic 2 level MMU is used.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>But let’s first discuss how Linux see the world of paging.</p>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/virtual_address_translation_32bit.svg" alt="Virtual Address Translation 32bit" width="740">
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Each of the entities PGD, P4D … etc are arrays of pointers. The PTE despite having a singular form also contain several pointers.</p>
+</li>
+<li>
+<p>in this document we will only capture ARM32 which has 2 or 3 levels of page tables but still good to know about the 4 levels of page tables.</p>
+</li>
+</ul>
+</div>
+<div class="sect2">
+<h3 id="_classic_arm32_paging_setup"><a class="anchor" href="#_classic_arm32_paging_setup"></a>3.1. classic ARM32 paging setup</h3>
+<div class="ulist">
+<ul>
+<li>
+<p>Linux folds P4D and PUD, providing 2048 pointers per PGD, 1 pointer per PMD and 512 pointers per PTE.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text">Level 1: Page Global Directory (PGD) - 2048 entries (2^11)
+Level 2: Page Middle Directory (PMD) - 2048 entries (2^11)
+# PGD and PMD are one to one mapped in case of classic ARM32 paging setup makeing it behave like 2 level paging setup.
+# This is not true for LPAE paging setup.
+Level 3: Page Table Entry (PTE) - 512 entries (2^9)</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Now , how much memory does each level cover?</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text"># Total memory covered
+# PGD(1) * PMD(2048) * PTE(512) * Page Size(4KB) = 4GB
+2048 entries * 512 entries * 4KB = 4GB
+# PGD: 11 bits PMD: 11 bits PTE: 9 bits Offset: 12 bits</code></pre>
+</div>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>The classic ARM32 paging setup in Linux folds P4D and PUD, providing 2048 pointers per PGD, 1 pointer per PMD and 512 pointers per PTE. It uses 3 levels of the hierarchy while ARM32 hardware only has two.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/linux_page_table_hierarchy.svg" alt="Linux Page Table Hierarchy" width="740">
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_lpae_large_physical_address_extension_paging_setup"><a class="anchor" href="#_lpae_large_physical_address_extension_paging_setup"></a>3.2. LPAE (Large Physical Address Extension) paging setup</h3>
+<div class="paragraph">
+<p>Each PGD has 4 pointers covering 1GB each (for a total of 4GB of memory) and 512 pointers per PMD dividing each 1GB into 2MB chunks, then 512 pointers per PTE dividing the 2MB chunks into 4KB chunks (pages).</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text"># Total memory covered
+# PGD(4) * PMD(512) * PTE(512) * Page Size(4KB) = 4GB
+4 * 512 * 512 * 4KB = 4GB
+# PGD: 2 bits | PMD: 9 bits | PTE: 9 bits | Offset: 12 bits</code></pre>
+</div>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/pgd_pmd_pte_hierarchy_4entry.svg" alt="PGD PMD PTE Hierarchy 4 entry" width="740">
+</div>
+</div>
+<div class="paragraph">
+<p>Reference from the kernel code: <a href="https://github.com/torvalds/linux/blob/cbfffcca2bf0622b601b7eaf477aa29035169184/include/linux/pgtable.h#L125" class="bare">https://github.com/torvalds/linux/blob/cbfffcca2bf0622b601b7eaf477aa29035169184/include/linux/pgtable.h#L125</a></p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="kernel">static inline pmd_t *pmd_off(struct mm_struct *mm, unsigned long va)
+{
+        return pmd_offset(pud_offset(p4d_offset(pgd_offset(mm, va), va), va), va);
+}</code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_translation_table"><a class="anchor" href="#_translation_table"></a>3.3. Translation table</h3>
+<div class="paragraph">
+<p>The virtual address for the kernespace global page directory is PAGE_OFFSET+0x4000. On ARM32 this base address, in physical memory, is set in TTBR0 (Translation Table Base Register). Linux uses the symbol swapper_pg_dir for this address.</p>
+</div>
+<div class="paragraph">
+<p>The translation table must begin on a 16K boundary. When a virtual address needs to be translated, the top 12 bits of that address select the first level entry in the translation table. Hence each first level entry deals with 1M of the virtual address space. Each entry is 32 bits in size.
+There are 4 types of table entries as indicated by the low 2 bits of the entry:</p>
+</div>
+<div class="paragraph">
+<p>00 - unmapped (access will give a translation fault).
+01 - coarse 2nd level table
+10 - section descriptor
+11 - fine 2nd level table</p>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>head.s uses 10 - section descriptor for mapping the memory.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_arm32_boot_context"><a class="anchor" href="#_arm32_boot_context"></a>4. ARM32 boot context</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Physical to virtual address mapping as per the head.S file</p>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-arm-boot/arm32_pa_va_mapping.svg" alt="Memory map" width="740">
+</div>
+</div>
+<div class="paragraph">
+<p>The diagram shows the complete identity mapping (VA = PA) that __setup_mmu builds across both address spaces side by side. A few things to note:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>The solid teal arrows through the RAM window are the active, cacheable mappings — every 1 MB section in that region gets a &#8230;&#8203;c0e descriptor and is fully accessible by the decompressor once the MMU turns on.</p>
+</li>
+<li>
+<p>The dashed arrows on the gray and amber regions carry the same VA = PA identity but with strongly-ordered attributes (&#8230;&#8203;c12) — the CPU can still address them, but no cache fill happens and no speculative execution is permitted (XN=1).</p>
+</li>
+<li>
+<p>The two amber strips at 0x40200000 and 0x50200000 are the rounding artefacts: sections where the 1 MB-aligned descriptor value falls just across the r9/r10 threshold when the full 32-bit value is compared, creating a one-section slip at each boundary. The lower one is physically DRAM mapped non-cached; the upper one is mapped cached ~1 MB past the true RAM end. Both are harmless for the decompressor&#8217;s purposes.</p>
+</li>
+</ul>
+</div>
+<div class="sect2">
+<h3 id="_where_execution_begins"><a class="anchor" href="#_where_execution_begins"></a>4.1. Where execution begins</h3>
+<div class="paragraph">
+<p>After the compressed kernel is decompressed, control passes to the physical address of <code>stext</code> in <code>arch/arm/kernel/head.S</code>.  At this point the CPU is running entirely in physical memory — MMU off, caches off, no page tables.</p>
+</div>
+<div class="paragraph">
+<p>The very first task is to build a minimal translation table, load it into the
+MMU hardware registers, then switch the program counter from a physical address
+to a virtual address.  Everything described in this document happens in that
+window.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_virtual_memory_split"><a class="anchor" href="#_virtual_memory_split"></a>4.2. Virtual memory split</h3>
+<div class="paragraph">
+<p>The kernel is compiled to execute in a configurable virtual address range
+controlled by <code>PAGE_OFFSET</code>:</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 25%;">
+<col style="width: 25%;">
+<col style="width: 50%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Kconfig symbol</th>
+<th class="tableblock halign-left valign-top"><code>PAGE_OFFSET</code></th>
+<th class="tableblock halign-left valign-top">Kernel virtual range</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>VMSPLIT_1G</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40000000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40000000</code>–<code>0xFFFFFFFF</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>VMSPLIT_2G</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x80000000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x80000000</code>–<code>0xFFFFFFFF</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>VMSPLIT_3G_OPT</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0xB0000000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0xB0000000</code>–<code>0xFFFFFFFF</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><em>(default)</em></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0xC0000000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0xC0000000</code>–<code>0xFFFFFFFF</code></p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>The most common split is <code>0xC0000000</code>: 1 GB of kernel virtual space, 3 GB for
+userspace.  The kernel is compiled to execute at
+<code>KERNEL_RAM_VADDR = PAGE_OFFSET + TEXT_OFFSET</code> (typically <code>0xC0008000</code>).</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_swapper_pg_dir_the_initial_page_table"><a class="anchor" href="#_swapper_pg_dir_the_initial_page_table"></a>4.3. <code>swapper_pg_dir</code> — the initial page table</h3>
+<div class="paragraph">
+<p>The initial page table lives at <code>KERNEL_RAM_VADDR - PG_DIR_SIZE</code>.  For classic
+ARM MMU this is <code>0xC0008000 - 0x4000 = 0xC0004000</code> in virtual memory.  At the
+corresponding physical offset (e.g. <code>0x40204000</code> in this debug session) this
+16 KB region holds 4096 first-level section descriptors covering the entire
+4 GB address space.</p>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p><code>swapper_pg_dir</code> is a <strong>temporary</strong> structure.  It is abandoned once the kernel&#8217;s
+virtual memory manager builds a full, accurate page table hierarchy.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_setup_mmu"><a class="anchor" href="#_setup_mmu"></a>5. __setup_mmu</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>This is called before the decompressor starts executing in virtual memory. cache_on() is called from head.S to enable the cache so that can speed up the execution of the decompressor.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code># cache_on -&gt; call_cache_fn -&gt; __armv7_mmu_cache_on -&gt; __setup_mmu
+
+cache_on () at /usr/src/kernel/arch/arm/boot/compressed/head.S:722
+722     in /usr/src/kernel/arch/arm/boot/compressed/head.S
+1: x/10i $pc
+=&gt; 0x41c7c000 &lt;cache_on&gt;:       mov     r3, #8
+   0x41c7c004 &lt;cache_on+4&gt;:     b       0x41c7c24c &lt;call_cache_fn&gt;
+
+# proc_types is called from head.S to detect the CPU type and call cache_on
+proc_types () at /usr/src/kernel/arch/arm/boot/compressed/head.S:1121
+1121    in /usr/src/kernel/arch/arm/boot/compressed/head.S
+1: x/10i $pc
+=&gt; 0x41c7c3cc &lt;proc_types+348&gt;: b       0x41c7c158 &lt;__armv7_mmu_cache_on&gt;
+   0x41c7c3d0 &lt;proc_types+352&gt;: b       0x41c7c45c &lt;__armv7_mmu_cache_off&gt;
+   0x41c7c3d4 &lt;proc_types+356&gt;: b       0x41c7c504 &lt;__armv7_mmu_cache_flush&gt;
+
+872     in /usr/src/kernel/arch/arm/boot/compressed/head.S
+1: x/10i $pc
+=&gt; 0x41c7c178 &lt;__armv7_mmu_cache_on+32&gt;:        tst     r11, #15
+   0x41c7c17c &lt;__armv7_mmu_cache_on+36&gt;:        movne   r6, #14
+   0x41c7c180 &lt;__armv7_mmu_cache_on+40&gt;:        blne    0x41c7c09c &lt;__setup_mmu&gt;</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p><code><em>armv7_mmu_cache_on</code> detects whether the CPU implements VMSA (the standard
+paged MMU), sets up the RAM attribute register <code>r6</code>, then branches to
+<code></em>setup_mmu</code>:</p>
+</div>
+<div class="paragraph">
+<p><code>r6</code> is the key hand-off value.  <code>CB_BITS</code> evaluates to <code>0x0C</code> (C=1, B=1),
+so <code>r6 = 0x0E</code> — exactly the <code>&#8230;&#8203;c0e</code> suffix seen in the GDB dumps for RAM
+entries.</p>
+</div>
+<hr>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_arm32_first_level_descriptor_format"><a class="anchor" href="#_arm32_first_level_descriptor_format"></a>6. ARM32 first-level descriptor format</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Reference: <a href="https://developer.arm.com/documentation/ddi0406/b/" class="bare">https://developer.arm.com/documentation/ddi0406/b/</a></p>
+</div>
+<div class="paragraph">
+<p>Each 32-bit entry in the first-level translation table is one of four types,selected by bits <code>[1:0]</code>:</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 20%;">
+<col style="width: 20%;">
+<col style="width: 60%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top"><code>bits[1:0]</code></th>
+<th class="tableblock halign-left valign-top">Type</th>
+<th class="tableblock halign-left valign-top">Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0b00</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Fault / invalid</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Access generates a Translation fault.  Bits <code>[31:2]</code> are ignored by hardware.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0b01</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Page table</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Points to a 1 KB second-level table for 4 KB / 64 KB page mapping.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0b10</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Section / Supersection</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Direct 1 MB (Section) or 16 MB (Supersection) flat mapping.
+  Bit <code>[18]</code> selects between them.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0b11</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Reserved</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Always generates a Translation fault in VMSAv7.</p></td>
+</tr>
+</tbody>
+</table>
+<div class="sect2">
+<h3 id="_section_descriptor_bit_layout"><a class="anchor" href="#_section_descriptor_bit_layout"></a>6.1. Section descriptor bit layout</h3>
+<div class="imageblock">
+<div class="content">
+<img src="../assets/images-arm-boot/arm_section_descriptor_bits.svg" alt="arm section descriptor bits">
+</div>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 25%;">
+<col style="width: 75%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Field</th>
+<th class="tableblock halign-left valign-top">Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>PA[31:20]</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Physical base address of the mapped 1 MB section.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>NS</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Non-secure bit (Security Extensions only).</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>nG</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Not-global — TLB entry tagged with ASID; only valid for current process.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>S</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Shareable — region is shared between multiple processors.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>AP[2], AP[1:0]</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Access Permissions.  Deprecated encoding <code>APX=0, AP=0b11</code> = full PL0+PL1 R/W.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>TEX[2:0]</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Type Extension — combined with C and B to encode the full memory type.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>XN</code> (bit 4)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Execute-Never.  Set = no instruction fetch permitted from this region.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>C</code> (bit 3)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Cacheable.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>B</code> (bit 2)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Bufferable.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>[1:0]</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0b10</code> = this is a Section descriptor.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="sect2">
+<h3 id="_the_two_descriptor_suffixes_seen_in_gdb"><a class="anchor" href="#_the_two_descriptor_suffixes_seen_in_gdb"></a>6.2. The two descriptor suffixes seen in GDB</h3>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 16.6666%;">
+<col style="width: 16.6666%;">
+<col style="width: 16.6666%;">
+<col style="width: 16.6666%;">
+<col style="width: 16.6666%;">
+<col style="width: 16.667%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Suffix</th>
+<th class="tableblock halign-left valign-top">XN (bit 4)</th>
+<th class="tableblock halign-left valign-top">C (bit 3)</th>
+<th class="tableblock halign-left valign-top">B (bit 2)</th>
+<th class="tableblock halign-left valign-top">Memory type</th>
+<th class="tableblock halign-left valign-top">Used for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>&#8230;&#8203;0c12</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1 (set)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Strongly ordered</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Non-RAM: no cache, no buffer, not executable</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>&#8230;&#8203;0c0e</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0 (clear)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Normal, cacheable + bufferable</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">RAM window: full cache + buffer, executable</p></td>
+</tr>
+</tbody>
+</table>
+<hr>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_phase_by_phase_analysis"><a class="anchor" href="#_phase_by_phase_analysis"></a>7. Phase-by-phase analysis</h2>
+<div class="sectionbody">
+<div class="sect2">
+<h3 id="_phase_1_locate_the_page_table_base"><a class="anchor" href="#_phase_1_locate_the_page_table_base"></a>7.1. Phase 1 — Locate the page-table base</h3>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm"><span class="nl">sub</span>   <span class="nb">r3</span><span class="err">,</span> <span class="nv">r4</span><span class="o">,</span> <span class="o">#</span><span class="mi">16384</span>    <span class="no">@</span> <span class="nv">r4</span> <span class="o">=</span> <span class="nv">end</span> <span class="nv">of</span> <span class="nv">compressed</span><span class="o">-</span><span class="nv">image</span> <span class="nv">allocation</span>
+<span class="nl">bic</span>   <span class="nb">r3</span><span class="err">,</span> <span class="nv">r3</span><span class="o">,</span> <span class="o">#</span><span class="mh">0xff</span>     <span class="no">@</span> <span class="err">\</span>
+<span class="nl">bic</span>   <span class="nb">r3</span><span class="err">,</span> <span class="nv">r3</span><span class="o">,</span> <span class="o">#</span><span class="mh">0x3f00</span>   <span class="no">@</span>  <span class="o">}</span> <span class="nv">clear</span> <span class="nv">low</span> <span class="mi">14</span> <span class="nv">bits</span> <span class="err">→</span> <span class="nv">align</span> <span class="nv">to</span> <span class="mi">16</span> <span class="nv">KB</span></code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The ARM MMU requires the first-level table to be aligned to a 16 KB boundary.
+Subtracting 16384 from <code>r4</code> and masking the low 14 bits produces a valid,
+aligned base address for the 4096 × 4-byte = 16 KB table.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="gdb">(gdb) info registers r3 r4
+r3 = 0x40204000    @ page-table base (aligned to 16 KB)
+r4 = 0x40208000    @ end of allocation</code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_phase_2_compute_the_ram_window"><a class="anchor" href="#_phase_2_compute_the_ram_window"></a>7.2. Phase 2 — Compute the RAM window</h3>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm"><span class="nl">mov</span>   <span class="nb">r0</span><span class="err">,</span> <span class="nv">r3</span>                <span class="no">@</span> <span class="nv">r0</span> <span class="o">=</span> <span class="nv">write</span> <span class="nv">pointer</span>
+<span class="nl">mov</span>   <span class="nb">r9</span><span class="err">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="nb">lsr</span> <span class="o">#</span><span class="mi">18</span>       <span class="no">@</span> <span class="err">\</span>
+<span class="nl">mov</span>   <span class="nb">r9</span><span class="err">,</span> <span class="nv">r9</span><span class="o">,</span> <span class="nb">lsl</span> <span class="o">#</span><span class="mi">18</span>       <span class="no">@</span>  <span class="o">}</span> <span class="nv">mask</span> <span class="nv">off</span> <span class="nv">low</span> <span class="mi">18</span> <span class="nv">bits</span> <span class="err">→</span> <span class="mi">256</span> <span class="nv">MB</span><span class="o">-</span><span class="nv">aligned</span> <span class="nv">base</span>
+<span class="nl">add</span>   <span class="nb">r10</span><span class="err">,</span> <span class="nv">r9</span><span class="o">,</span> <span class="o">#</span><span class="mh">0x10000000</span>  <span class="no">@</span> <span class="nv">r10</span> <span class="o">=</span> <span class="nv">r9</span> <span class="o">+</span> <span class="mi">256</span> <span class="nv">MB</span></code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Shifting right then left by 18 is a bitwise AND with <code>~0x3FFFF</code>, which rounds
+the page-table base address down to the nearest 256 MB boundary.  Because the
+kernel is loaded at a 16 MB-aligned physical address, this reliably captures
+the start of the DRAM bank.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="gdb">(gdb) info registers r9 r10
+r9  = 0x40204000    @ RAM window start
+r10 = 0x50204000    @ RAM window end  (r9 + 256 MB)</code></pre>
+</div>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>The 256 MB window is a <strong>conservative estimate</strong>, not the true DRAM size.
+Its only purpose is to give the decompressor a workable cached region.
+The real memory map is built later by <code>__create_page_tables</code> in
+<code>arch/arm/kernel/head.S</code>.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_phase_3_initialise_the_descriptor_template"><a class="anchor" href="#_phase_3_initialise_the_descriptor_template"></a>7.3. Phase 3 — Initialise the descriptor template</h3>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm"><span class="nl">mov</span>   <span class="nb">r1</span><span class="err">,</span> <span class="o">#</span><span class="mh">0x12</span>         <span class="no">@</span> <span class="mi">0</span><span class="nv">b0001_0010</span><span class="err">:</span> <span class="o">[</span><span class="mi">1</span><span class="err">:</span><span class="mi">0</span><span class="o">]=</span><span class="mi">10</span> <span class="nv">Section</span><span class="o">,</span> <span class="nv">bit</span><span class="o">[</span><span class="mi">4</span><span class="o">]=</span><span class="mi">1</span> <span class="nv">XN</span>
+<span class="nl">orr</span>   <span class="nb">r1</span><span class="err">,</span> <span class="nv">r1</span><span class="o">,</span> <span class="o">#</span><span class="mi">3</span> <span class="o">&lt;&lt;</span> <span class="mi">10</span>  <span class="no">@</span> <span class="nv">AP</span><span class="o">[</span><span class="mi">11</span><span class="err">:</span><span class="mi">10</span><span class="o">]</span> <span class="o">=</span> <span class="mi">0</span><span class="nv">b11</span> <span class="o">(</span><span class="nv">full</span> <span class="nv">access</span><span class="o">,</span> <span class="nv">deprecated</span> <span class="nv">encoding</span><span class="o">)</span>
+<span class="nl">add</span>   <span class="nb">r2</span><span class="err">,</span> <span class="nv">r3</span><span class="o">,</span> <span class="o">#</span><span class="mi">16384</span>    <span class="no">@</span> <span class="nv">r2</span> <span class="o">=</span> <span class="nv">loop</span> <span class="nv">sentinel</span> <span class="o">(</span><span class="nv">one</span><span class="o">-</span><span class="nv">past</span><span class="o">-</span><span class="nv">end</span> <span class="nv">of</span> <span class="nv">table</span><span class="o">)</span></code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p><code>r1</code> starts as <code>0x00000c12</code>.  Because bits <code>[31:20]</code> encode the physical base
+address of a section descriptor, adding <code>0x100000</code> (1 MB) each iteration
+simultaneously advances both the PA in the descriptor and the value being
+compared against <code>r9</code>/<code>r10</code>.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="gdb">(gdb) info registers r1 r2 r0
+r1 = 0x00000c12    @ initial descriptor template
+r2 = 0x40208000    @ loop sentinel
+r0 = 0x40204000    @ write pointer (= r3)</code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_phase_4_main_mapping_loop"><a class="anchor" href="#_phase_4_main_mapping_loop"></a>7.4. Phase 4 — Main mapping loop</h3>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm"><span class="nl">1</span><span class="err">:</span>  <span class="nb">cmp</span>   <span class="nv">r1</span><span class="o">,</span>  <span class="nv">r9</span>       <span class="no">@</span> <span class="nv">C</span><span class="o">=</span><span class="mi">0</span> <span class="nv">if</span> <span class="nv">r1</span> <span class="o">&lt;</span> <span class="nv">r9</span>
+    <span class="nb">cmphs</span> <span class="nv">r10</span><span class="o">,</span> <span class="nv">r1</span>       <span class="no">@</span> <span class="nv">C</span><span class="o">=</span><span class="mi">0</span> <span class="nv">if</span> <span class="nv">r10</span> <span class="o">&lt;=</span> <span class="nv">r1</span>  <span class="o">(</span><span class="nv">only</span> <span class="nv">tested</span> <span class="nv">when</span> <span class="nv">C</span> <span class="nv">was</span> <span class="nv">set</span><span class="o">)</span>
+    <span class="nb">bic</span>   <span class="nv">r1</span><span class="o">,</span> <span class="nv">r1</span><span class="o">,</span> <span class="o">#</span><span class="mh">0x1c</span> <span class="no">@</span> <span class="nv">clear</span> <span class="nv">XN</span> <span class="nv">| C |</span> <span class="nv">B</span>
+    <span class="nb">orrlo</span> <span class="nv">r1</span><span class="o">,</span> <span class="nv">r1</span><span class="o">,</span> <span class="o">#</span><span class="mh">0x10</span> <span class="no">@</span> <span class="nv">non</span><span class="o">-</span><span class="nv">RAM</span><span class="err">:</span> <span class="nv">set</span> <span class="nv">XN</span><span class="o">,</span> <span class="nv">leave</span> <span class="nv">C</span><span class="o">/</span><span class="nv">B</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="nb">orrhs</span> <span class="nv">r1</span><span class="o">,</span> <span class="nv">r1</span><span class="o">,</span> <span class="nv">r6</span>    <span class="no">@</span> <span class="nv">RAM</span><span class="err">:</span> <span class="nv">OR</span> <span class="nv">in</span> <span class="nv">r6</span> <span class="o">(</span><span class="mh">0x0e</span><span class="err">:</span> <span class="nv">C</span><span class="o">=</span><span class="mi">1</span><span class="o">,</span> <span class="nv">B</span><span class="o">=</span><span class="mi">1</span><span class="o">,</span> <span class="nv">XN</span><span class="o">=</span><span class="mi">0</span><span class="o">)</span>
+    <span class="nb">str</span>   <span class="nv">r1</span><span class="o">,</span> <span class="o">[</span><span class="nv">r0</span><span class="o">],</span> <span class="o">#</span><span class="mi">4</span>  <span class="no">@</span> <span class="nv">write</span> <span class="nv">descriptor</span><span class="o">,</span> <span class="nv">post</span><span class="o">-</span><span class="nv">increment</span> <span class="nv">r0</span>
+    <span class="nb">add</span>   <span class="nv">r1</span><span class="o">,</span> <span class="nv">r1</span><span class="o">,</span> <span class="o">#</span><span class="mi">1048576</span>
+    <span class="nb">teq</span>   <span class="nv">r0</span><span class="o">,</span> <span class="nv">r2</span>
+    <span class="nb">bne</span>   <span class="mi">1</span><span class="nv">b</span></code></pre>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_the_dual_purpose_r1_idiom"><a class="anchor" href="#_the_dual_purpose_r1_idiom"></a>7.4.1. The dual-purpose <code>r1</code> idiom</h4>
+<div class="paragraph">
+<p><code>r1</code> is simultaneously the section descriptor being written and the probe value
+tested against the RAM window.  This works because bits <code>[31:20]</code> carry the
+PA base in both contexts — incrementing by <code>0x100000</code> is valid for both.</p>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_condition_code_logic"><a class="anchor" href="#_condition_code_logic"></a>7.4.2. Condition-code logic</h4>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code>cmp   r1, r9       → if r1 &lt; r9:  C=0  (LO — below window)
+cmphs r10, r1      → only runs if C=1
+                   → if r10 &lt;= r1: C=0  (LO — above window)
+
+Final conditions:
+  LO → r1 &lt; r9  OR  r1 &gt;= r10  → outside [r9, r10) → non-RAM
+  HS → r9 &lt;= r1 &lt; r10           → inside  [r9, r10) → RAM</code></pre>
+</div>
+</div>
+<div class="admonitionblock important">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-important" title="Important"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>The comparison uses the <strong>full 32-bit r1</strong> including the low <code>0xc12</code> attribute
+bits — not just the PA base.  This creates a 1 MB rounding artefact at both
+boundaries of the RAM window.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_phase_5_flash_execution_context_fixup_epilogue"><a class="anchor" href="#_phase_5_flash_execution_context_fixup_epilogue"></a>7.5. Phase 5 — Flash / execution-context fixup (epilogue)</h3>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm"><span class="nl">orr</span>   <span class="nb">r1</span><span class="err">,</span> <span class="nv">r6</span><span class="o">,</span> <span class="o">#</span><span class="mh">0x04</span>        <span class="no">@</span> <span class="nv">r6</span> <span class="o">=</span> <span class="mh">0x0e</span><span class="o">,</span> <span class="nv">force</span> <span class="nv">B</span> <span class="nv">bit</span> <span class="err">→</span> <span class="nv">r1</span> <span class="o">=</span> <span class="mh">0x0e</span> <span class="o">|</span> <span class="mh">0x04</span> <span class="o">=</span> <span class="mh">0x0e</span>
+<span class="nl">orr</span>   <span class="nb">r1</span><span class="err">,</span> <span class="nv">r1</span><span class="o">,</span> <span class="o">#</span><span class="mi">3</span> <span class="o">&lt;&lt;</span> <span class="mi">10</span>     <span class="no">@</span> <span class="nv">AP</span><span class="o">=</span><span class="mi">11</span>
+<span class="nl">mov</span>   <span class="nb">r2</span><span class="err">,</span> <span class="nv">pc</span>               <span class="no">@</span> <span class="nv">current</span> <span class="nv">PC</span>
+<span class="nl">mov</span>   <span class="nb">r2</span><span class="err">,</span> <span class="nv">r2</span><span class="o">,</span> <span class="nb">lsr</span> <span class="o">#</span><span class="mi">20</span>      <span class="no">@</span> <span class="mi">1</span> <span class="nv">MB</span> <span class="nv">section</span> <span class="nv">index</span>
+<span class="nl">orr</span>   <span class="nb">r1</span><span class="err">,</span> <span class="nv">r1</span><span class="o">,</span> <span class="nv">r2</span><span class="o">,</span> <span class="nb">lsl</span> <span class="o">#</span><span class="mi">20</span>  <span class="no">@</span> <span class="nv">descriptor</span> <span class="o">=</span> <span class="nv">RAM</span> <span class="nv">attrs</span> <span class="o">+</span> <span class="nv">section</span> <span class="nv">base</span>
+<span class="nl">add</span>   <span class="nb">r0</span><span class="err">,</span> <span class="nv">r3</span><span class="o">,</span> <span class="nv">r2</span><span class="o">,</span> <span class="nb">lsl</span> <span class="o">#</span><span class="mi">2</span>   <span class="no">@</span> <span class="nv">table</span> <span class="nv">slot</span> <span class="o">=</span> <span class="nv">base</span> <span class="o">+</span> <span class="nv">index</span> <span class="o">*</span> <span class="mi">4</span>
+<span class="nl">str</span>   <span class="nb">r1</span><span class="err">,</span> <span class="o">[</span><span class="nv">r0</span><span class="o">],</span> <span class="o">#</span><span class="mi">4</span>         <span class="no">@</span> <span class="nv">patch</span> <span class="nv">section</span> <span class="nv">containing</span> <span class="nv">PC</span>
+<span class="nl">add</span>   <span class="nb">r1</span><span class="err">,</span> <span class="nv">r1</span><span class="o">,</span> <span class="o">#</span><span class="mi">1048576</span>
+<span class="nl">str</span>   <span class="nb">r1</span><span class="err">,</span> <span class="o">[</span><span class="nv">r0</span><span class="o">]</span>             <span class="no">@</span> <span class="nv">patch</span> <span class="nv">next</span> <span class="mi">1</span> <span class="nv">MB</span> <span class="nv">section</span>
+<span class="nl">mov</span>   <span class="nb">pc</span><span class="err">,</span> <span class="nv">lr</span></code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>This epilogue overwrites the two table entries that cover the currently
+executing code with full RAM attributes.  It is necessary when the decompressor
+is running from NOR Flash (outside the <code>[r9, r10)</code> window) — without this
+patch those entries would carry <code>&#8230;&#8203;c12</code> (non-cached, non-executable) and the
+CPU could not execute from them after the MMU is enabled.</p>
+</div>
+<hr>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_register_summary_on_entryexit"><a class="anchor" href="#_register_summary_on_entryexit"></a>8. Register summary on entry/exit</h2>
+<div class="sectionbody">
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 20%;">
+<col style="width: 20%;">
+<col style="width: 20%;">
+<col style="width: 40%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Register</th>
+<th class="tableblock halign-left valign-top">Direction</th>
+<th class="tableblock halign-left valign-top">Example value</th>
+<th class="tableblock halign-left valign-top">Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r4</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">in</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40208000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">End of page-table allocation</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r6</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">in</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x0000000e</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">RAM section attributes from <code>__armv7_mmu_cache_on</code></p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>lr</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">in</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><em>(caller&#8217;s LR)</em></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Return address (written to <code>pc</code> at end)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r3</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">internal</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40204000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Aligned page-table base</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r9</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">internal</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40204000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">RAM window start</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r10</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">internal</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x50204000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">RAM window end (r9 + 256 MB)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r0</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">internal</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40204000</code>→<code>0x40208000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Write pointer through table</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r1</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">internal</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x00000c12</code>→<code>0xfffffff2</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Running descriptor (PA base + attributes)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>r2</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">internal</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40208000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Loop sentinel / PC section index (epilogue)</p></td>
+</tr>
+</tbody>
+</table>
+<hr>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_gdb_trace_observed_page_table_dumps"><a class="anchor" href="#_gdb_trace_observed_page_table_dumps"></a>9. GDB trace — observed page-table dumps</h2>
+<div class="sectionbody">
+<div class="ulist">
+<ul>
+<li>
+<p>0x40204000 is the page table base address.</p>
+</li>
+<li>
+<p>0x40208000 is the end of the page table allocation</p>
+</li>
+</ul>
+</div>
+<div class="sect2">
+<h3 id="_early_non_ram_region_0x40204000"><a class="anchor" href="#_early_non_ram_region_0x40204000"></a>9.1. Early non-RAM region (<code>0x40204000</code>)</h3>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="gdb">(gdb) x/20xw 0x40204000
+0x40204000:  0x00000c12  0x00100c12  0x00200c12  0x00300c12
+0x40204010:  0x00400c12  0x00500c12  0x00600c12  0x00700c12
+0x40204020:  0x00800c12  0x00900c12  0x00a00c12  0x00b00c12</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Every entry ends in <code>&#8230;&#8203;c12</code>: XN=1, C=0, B=0 — strongly ordered.  PA base
+increases by <code>0x00100000</code> per slot, confirming identity mapping (VA = PA)
+across the entire address space.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_lower_ram_boundary_0x40205000"><a class="anchor" href="#_lower_ram_boundary_0x40205000"></a>9.2. Lower RAM boundary (<code>0x40205000</code>)</h3>
+<div class="paragraph">
+<p>Table address <code>0x40205000</code> is entry <code>(0x40205000 - 0x40204000) / 4 = 0x400</code>,
+describing VA/PA <code>0x40000000</code> onwards.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="gdb">(gdb) x/20xw 0x40205000
+0x40205000:  0x40000c12  0x40100c12  0x40200c0e  0x40300c0e
+0x40205010:  0x40400c0e  0x40500c0e  0x40600c0e  0x40700c0e
+0x40205020:  0x40800c0e  0x40900c0e  0x40a00c0e  0x40b00c0e
+0x40205030:  0x40c00c0e  0x40d00c0e  0x40e00c0e  0x40f00c0e
+0x40205040:  0x41000c0e  0x41100c0e  0x41200c0e  0x41300c0e</code></pre>
+</div>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 12.5%;">
+<col style="width: 12.5%;">
+<col style="width: 12.5%;">
+<col style="width: 25%;">
+<col style="width: 37.5%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Entry</th>
+<th class="tableblock halign-left valign-top">Descriptor</th>
+<th class="tableblock halign-left valign-top">PA</th>
+<th class="tableblock halign-left valign-top">Suffix</th>
+<th class="tableblock halign-left valign-top">Attributes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0x400</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40000c12</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40000000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>&#8230;&#8203;c12</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Non-RAM: XN=1, C=0, B=0</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0x401</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40100c12</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40100000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>&#8230;&#8203;c12</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Non-RAM: XN=1, C=0, B=0</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0x402</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40200c0e</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40200000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>&#8230;&#8203;c0e</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">RAM: XN=0, C=1, B=1 (first cached entry)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0x403+</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40300c0e</code>&#8230;&#8203;</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40300000</code>&#8230;&#8203;</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>&#8230;&#8203;c0e</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">RAM continues</p></td>
+</tr>
+</tbody>
+</table>
+<div class="sect3">
+<h4 id="_why_the_transition_falls_at_0x40200000_not_r9_0x40204000"><a class="anchor" href="#_why_the_transition_falls_at_0x40200000_not_r9_0x40204000"></a>9.2.1. Why the transition falls at <code>0x40200000</code>, not <code>r9 = 0x40204000</code></h4>
+<div class="paragraph">
+<p>The full-width comparison includes the <code>0xc12</code> attribute bits:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code>r1 = 0x40200c12  →  0x40200c12 &lt; 0x40204000  →  LO → non-RAM → ...c12
+r1 = 0x40300c12  →  0x40300c12 &gt; 0x40204000  →  HS → RAM     → ...c0e</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The <code>0x40200000</code> section is physically DRAM but its descriptor value falls
+below <code>r9</code>, so the loop marks it non-cached.  The epilogue&#8217;s flash-fixup
+subsequently patches it to <code>c0e</code> if the decompressor happens to be executing
+from that region — which explains why the GDB dump already shows <code>c0e</code> at
+entry <code>0x402</code> even though the loop would have written <code>c12</code>.</p>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_upper_ram_boundary_0x40205400"><a class="anchor" href="#_upper_ram_boundary_0x40205400"></a>9.3. Upper RAM boundary (<code>0x40205400</code>)</h3>
+<div class="paragraph">
+<p>Table address <code>0x40205400</code> is entry <code>0x500</code>, describing VA/PA <code>0x50000000</code>
+onwards.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="gdb">(gdb) x/20xw 0x40205400
+0x40205400:  0x50000c0e  0x50100c0e  0x50200c12  0x50300c12
+0x40205410:  0x50400c12  0x50500c12  0x50600c12  0x50700c12
+0x40205420:  0x50800c12  0x50900c12  0x50a00c12  0x50b00c12
+0x40205430:  0x50c00c12  0x50d00c12  0x50e00c12  0x50f00c12
+0x40205440:  0x51000c12  0x51100c12  0x51200c12  0x51300c12</code></pre>
+</div>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 12.5%;">
+<col style="width: 12.5%;">
+<col style="width: 12.5%;">
+<col style="width: 25%;">
+<col style="width: 37.5%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Entry</th>
+<th class="tableblock halign-left valign-top">Descriptor</th>
+<th class="tableblock halign-left valign-top">PA</th>
+<th class="tableblock halign-left valign-top">Suffix</th>
+<th class="tableblock halign-left valign-top">Attributes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0x500</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x50000c0e</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x50000000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>&#8230;&#8203;c0e</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">RAM: XN=0, C=1, B=1</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0x501</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x50100c0e</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x50100000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>&#8230;&#8203;c0e</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">RAM: XN=0, C=1, B=1 (last cached entry)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0x502</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x50200c12</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x50200000</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>&#8230;&#8203;c12</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Non-RAM: XN=1, C=0, B=0 (first uncached entry)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0x503+</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x50300c12</code>&#8230;&#8203;</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x50300000</code>&#8230;&#8203;</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>&#8230;&#8203;c12</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Non-RAM to <code>0xFFFFFFFF</code></p></td>
+</tr>
+</tbody>
+</table>
+<div class="sect3">
+<h4 id="_why_the_transition_falls_at_0x50200000_not_r10_0x50204000"><a class="anchor" href="#_why_the_transition_falls_at_0x50200000_not_r10_0x50204000"></a>9.3.1. Why the transition falls at <code>0x50200000</code>, not <code>r10 = 0x50204000</code></h4>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code>r1 = 0x50200c0e
+cmphs r10, r1  →  0x50204000 &gt; 0x50200c0e  →  HS → still RAM → ...c0e
+
+r1 = 0x50300c12  (after bic clears old attrs)
+cmphs r10, r1  →  0x50204000 &lt; 0x50300c12  →  LO → non-RAM  → ...c12</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The <code>0x50200000</code> section passes the HS test even though <code>r10 = 0x50204000</code> is
+only 16 KB into it.  The remaining ~1020 KB (<code>0x50204000</code>–<code>0x502FFFFF</code>)
+receives cached attributes it does not strictly need.  This is harmless —
+those addresses are never accessed during early boot.</p>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_rounding_artefact_summary"><a class="anchor" href="#_rounding_artefact_summary"></a>9.4. Rounding-artefact summary</h3>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 33.3333%;">
+<col style="width: 16.6666%;">
+<col style="width: 16.6666%;">
+<col style="width: 33.3335%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">PA section</th>
+<th class="tableblock halign-left valign-top">Loop result</th>
+<th class="tableblock halign-left valign-top">Suffix</th>
+<th class="tableblock halign-left valign-top">Note</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x00000000</code>–<code>0x401FFFFF</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Non-RAM</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>&#8230;&#8203;c12</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Below r9</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40200000</code>–<code>0x402FFFFF</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Non-RAM</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>&#8230;&#8203;c12</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Descriptor &lt; r9 — physically DRAM, mapped uncached by loop</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x40300000</code>–<code>0x501FFFFF</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">RAM</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>&#8230;&#8203;c0e</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Core cached window (~254 MB)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x50200000</code>–<code>0x502FFFFF</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">RAM</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>&#8230;&#8203;c0e</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Descriptor &lt; r10 — over-mapped cached by ~1 MB</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>0x50300000</code>–<code>0xFFFFFFFF</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Non-RAM</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>&#8230;&#8203;c12</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Above r10</p></td>
+</tr>
+</tbody>
+</table>
+<hr>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_full_4_gb_memory_map_post_loop"><a class="anchor" href="#_full_4_gb_memory_map_post_loop"></a>10. Full 4 GB memory map (post-loop)</h2>
+<div class="sectionbody">
+<div class="imageblock">
+<div class="content">
+<img src="../assets/images-arm-boot/virtual_physical_address_space_map.svg" alt="virtual physical address space map">
+</div>
+</div>
+<hr>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_mmu_enablement_steps_after_setup_mmu_returns"><a class="anchor" href="#_mmu_enablement_steps_after_setup_mmu_returns"></a>11. MMU enablement — steps after <code>__setup_mmu</code> returns</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p><code><em>setup_mmu</code> returns to <code></em>armv7_mmu_cache_on</code>, which then executes a
+carefully ordered coprocessor sequence to activate the MMU.</p>
+</div>
+<div class="sect2">
+<h3 id="_full_sequence"><a class="anchor" href="#_full_sequence"></a>11.1. Full sequence</h3>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm">    <span class="nb">mov</span>   <span class="nv">r0</span><span class="o">,</span> <span class="o">#</span><span class="mi">0</span>
+    <span class="nb">mcr</span>   <span class="nv">p15</span><span class="o">,</span> <span class="mi">0</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="nv">c7</span><span class="o">,</span> <span class="nv">c10</span><span class="o">,</span> <span class="mi">4</span>    <span class="no">@</span> <span class="nv">DSB</span> <span class="err">—</span> <span class="nv">drain</span> <span class="nv">write</span> <span class="nv">buffer</span>
+
+    <span class="nb">tst</span>   <span class="nv">r11</span><span class="o">,</span> <span class="o">#</span><span class="mh">0xf</span>                  <span class="no">@</span> <span class="nv">VMSA</span> <span class="nv">capable</span><span class="o">?</span>
+    <span class="nb">mcrne</span> <span class="nv">p15</span><span class="o">,</span> <span class="mi">0</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="nv">c8</span><span class="o">,</span> <span class="nv">c7</span><span class="o">,</span> <span class="mi">0</span>     <span class="no">@</span> <span class="nv">flush</span> <span class="nv">I</span><span class="o">+</span><span class="nv">D</span> <span class="nv">TLBs</span>
+
+    <span class="nb">mrc</span>   <span class="nv">p15</span><span class="o">,</span> <span class="mi">0</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="nv">c1</span><span class="o">,</span> <span class="nv">c0</span><span class="o">,</span> <span class="mi">0</span>     <span class="no">@</span> <span class="nv">read</span> <span class="nv">SCTLR</span>
+    <span class="nb">bic</span>   <span class="nv">r0</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="o">#</span><span class="mi">1</span> <span class="o">&lt;&lt;</span> <span class="mi">28</span>          <span class="no">@</span> <span class="nv">clear</span> <span class="nv">TRE</span> <span class="o">(</span><span class="nv">direct</span> <span class="nv">TEX</span> <span class="nv">model</span><span class="o">)</span>
+    <span class="nb">orr</span>   <span class="nv">r0</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="o">#</span><span class="mh">0x5000</span>           <span class="no">@</span> <span class="nv">I</span><span class="o">-</span><span class="nv">cache</span> <span class="o">(</span><span class="nv">bit</span> <span class="mi">12</span><span class="o">)</span> <span class="o">+</span> <span class="nv">RR</span> <span class="nv">replace</span> <span class="o">(</span><span class="nv">bit</span> <span class="mi">14</span><span class="o">)</span>
+    <span class="nb">orr</span>   <span class="nv">r0</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="o">#</span><span class="mh">0x003c</span>           <span class="no">@</span> <span class="nv">write</span> <span class="nv">buffer</span> <span class="o">(</span><span class="nv">bits</span> <span class="mi">2</span><span class="err">–</span><span class="mi">5</span><span class="o">)</span>
+    <span class="nb">bic</span>   <span class="nv">r0</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="o">#</span><span class="mi">2</span>                <span class="no">@</span> <span class="nv">clear</span> <span class="nv">A</span> <span class="o">(</span><span class="nv">no</span> <span class="nv">unaligned</span> <span class="nv">fault</span><span class="o">)</span>
+    <span class="nb">orr</span>   <span class="nv">r0</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="o">#</span><span class="mi">1</span> <span class="o">&lt;&lt;</span> <span class="mi">22</span>          <span class="no">@</span> <span class="nv">set</span> <span class="nv">U</span> <span class="o">(</span><span class="nv">ARMv6</span> <span class="nv">unaligned</span> <span class="nv">model</span><span class="o">)</span>
+
+<span class="cp">#ifdef CONFIG_MMU</span>
+ <span class="nf">ARM_BE8</span><span class="err">(</span><span class="nb">orr</span> <span class="nv">r0</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="o">#</span><span class="mi">1</span> <span class="o">&lt;&lt;</span> <span class="mi">25</span><span class="o">)</span>      <span class="no">@</span> <span class="nv">big</span><span class="o">-</span><span class="nv">endian</span> <span class="nv">page</span> <span class="nv">tables</span> <span class="o">(</span><span class="nv">BE8</span> <span class="nv">build</span> <span class="nv">only</span><span class="o">)</span>
+    <span class="nb">mrcne</span>   <span class="nv">p15</span><span class="o">,</span> <span class="mi">0</span><span class="o">,</span> <span class="nv">r6</span><span class="o">,</span> <span class="nv">c2</span><span class="o">,</span> <span class="nv">c0</span><span class="o">,</span> <span class="mi">2</span>   <span class="no">@</span> <span class="nv">save</span> <span class="nv">current</span> <span class="nv">TTBCR</span>
+    <span class="nb">orrne</span>   <span class="nv">r0</span><span class="o">,</span>  <span class="nv">r0</span><span class="o">,</span> <span class="o">#</span><span class="mi">1</span>             <span class="no">@</span> <span class="nv">stage</span> <span class="nv">MMU</span> <span class="nv">enable</span><span class="err">:</span> <span class="nv">SCTLR</span> <span class="nv">bit</span> <span class="mi">0</span> <span class="o">=</span> <span class="mi">1</span>
+    <span class="nb">movne</span>   <span class="nv">r1</span><span class="o">,</span>  <span class="o">#</span><span class="mh">0xfffffffd</span>        <span class="no">@</span> <span class="nv">domain</span> <span class="mi">0</span> <span class="o">=</span> <span class="nv">client</span>
+    <span class="nb">bic</span>     <span class="nv">r6</span><span class="o">,</span>  <span class="nv">r6</span><span class="o">,</span> <span class="o">#</span><span class="mi">1</span> <span class="o">&lt;&lt;</span> <span class="mi">31</span>      <span class="o">@</span> <span class="mi">32</span><span class="o">-</span><span class="nv">bit</span> <span class="nv">translation</span> <span class="o">(</span><span class="nv">not</span> <span class="nv">LPAE</span><span class="o">)</span>
+    <span class="nb">bic</span>     <span class="nv">r6</span><span class="o">,</span>  <span class="nv">r6</span><span class="o">,</span> <span class="o">#(</span><span class="mi">7</span><span class="o">&lt;&lt;</span><span class="mi">0</span><span class="o">)|(</span><span class="mi">1</span><span class="o">&lt;&lt;</span><span class="mi">4</span><span class="o">)</span> <span class="no">@</span> <span class="nv">N</span><span class="o">=</span><span class="mi">0</span><span class="o">,</span> <span class="nv">PD0</span><span class="o">=</span><span class="mi">0</span> <span class="err">→</span> <span class="nv">all</span> <span class="nv">VAs</span> <span class="nv">use</span> <span class="nv">TTBR0</span>
+    <span class="nb">mcrne</span>   <span class="nv">p15</span><span class="o">,</span> <span class="mi">0</span><span class="o">,</span> <span class="nv">r3</span><span class="o">,</span> <span class="nv">c2</span><span class="o">,</span> <span class="nv">c0</span><span class="o">,</span> <span class="mi">0</span>  <span class="no">@</span> <span class="nv">TTBR0</span> <span class="o">=</span> <span class="nv">page</span><span class="o">-</span><span class="nv">table</span> <span class="nv">base</span> <span class="o">(</span><span class="nv">r3</span><span class="o">)</span>
+    <span class="nb">mcrne</span>   <span class="nv">p15</span><span class="o">,</span> <span class="mi">0</span><span class="o">,</span> <span class="nv">r1</span><span class="o">,</span> <span class="nv">c3</span><span class="o">,</span> <span class="nv">c0</span><span class="o">,</span> <span class="mi">0</span>  <span class="no">@</span> <span class="nv">DACR</span>  <span class="o">=</span> <span class="nv">domain</span> <span class="mi">0</span> <span class="nv">client</span>
+    <span class="nb">mcrne</span>   <span class="nv">p15</span><span class="o">,</span> <span class="mi">0</span><span class="o">,</span> <span class="nv">r6</span><span class="o">,</span> <span class="nv">c2</span><span class="o">,</span> <span class="nv">c0</span><span class="o">,</span> <span class="mi">2</span>  <span class="no">@</span> <span class="nv">TTBCR</span> <span class="o">=</span> <span class="mi">32</span><span class="o">-</span><span class="nv">bit</span><span class="o">,</span> <span class="nv">TTBR0</span> <span class="nv">only</span>
+<span class="cp">#endif</span>
+
+    <span class="nb">mcr</span>   <span class="nv">p15</span><span class="o">,</span> <span class="mi">0</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="nv">c7</span><span class="o">,</span> <span class="nv">c5</span><span class="o">,</span> <span class="mi">4</span>    <span class="no">@</span> <span class="nv">ISB</span> <span class="err">—</span> <span class="nv">flush</span> <span class="nv">pipeline</span>
+    <span class="nb">mcr</span>   <span class="nv">p15</span><span class="o">,</span> <span class="mi">0</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="nv">c1</span><span class="o">,</span> <span class="nv">c0</span><span class="o">,</span> <span class="mi">0</span>    <span class="no">@</span> <span class="nv">write</span> <span class="nv">SCTLR</span> <span class="err">—</span> <span class="nv">MMU</span> <span class="nv">NOW</span> <span class="nv">ON</span>
+    <span class="nb">mrc</span>   <span class="nv">p15</span><span class="o">,</span> <span class="mi">0</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="nv">c1</span><span class="o">,</span> <span class="nv">c0</span><span class="o">,</span> <span class="mi">0</span>    <span class="no">@</span> <span class="nv">read</span> <span class="nv">back</span> <span class="o">(</span><span class="nv">force</span> <span class="nv">write</span> <span class="nv">completion</span><span class="o">)</span>
+    <span class="nb">mov</span>   <span class="nv">r0</span><span class="o">,</span> <span class="o">#</span><span class="mi">0</span>
+    <span class="nb">mcr</span>   <span class="nv">p15</span><span class="o">,</span> <span class="mi">0</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="nv">c7</span><span class="o">,</span> <span class="nv">c5</span><span class="o">,</span> <span class="mi">4</span>    <span class="no">@</span> <span class="nv">ISB</span> <span class="err">—</span> <span class="nv">next</span> <span class="nv">fetch</span> <span class="nv">goes</span> <span class="nv">through</span> <span class="nv">MMU</span>
+    <span class="nb">mov</span>   <span class="nv">pc</span><span class="o">,</span> <span class="nv">r12</span>                   <span class="no">@</span> <span class="nv">return</span></code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_step_by_step_breakdown"><a class="anchor" href="#_step_by_step_breakdown"></a>11.2. Step-by-step breakdown</h3>
+<div class="sect3">
+<h4 id="_step_1_drain_the_write_buffer_dsb"><a class="anchor" href="#_step_1_drain_the_write_buffer_dsb"></a>11.2.1. Step 1 — Drain the write buffer (DSB)</h4>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm"><span class="nl">mov</span>   <span class="nb">r0</span><span class="err">,</span> <span class="o">#</span><span class="mi">0</span>
+<span class="nl">mcr</span>   <span class="nb">p15</span><span class="err">,</span> <span class="mi">0</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="nv">c7</span><span class="o">,</span> <span class="nv">c10</span><span class="o">,</span> <span class="mi">4</span>    <span class="no">@</span> <span class="nv">Data</span> <span class="nv">Synchronisation</span> <span class="nv">Barrier</span></code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>All buffered writes to the page table must reach physical memory before any
+MMU register is loaded.  Without the DSB a pending store to a descriptor could
+arrive <strong>after</strong> the MMU has already fetched that entry, causing a translation
+from stale data.</p>
+</div>
+<div class="paragraph">
+<p><code>c7, c10, 4</code> is the CP15 DSB encoding for ARMv6/v7.  It stalls the pipeline
+until the write buffer is empty and all cache-line evictions are complete.</p>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_step_2_flush_the_tlbs"><a class="anchor" href="#_step_2_flush_the_tlbs"></a>11.2.2. Step 2 — Flush the TLBs</h4>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm"><span class="nl">tst</span>    <span class="nb">r11</span><span class="err">,</span> <span class="o">#</span><span class="mh">0xf</span>               <span class="no">@</span> <span class="nv">r11</span><span class="o">[</span><span class="mi">3</span><span class="err">:</span><span class="mi">0</span><span class="o">]</span> <span class="nv">non</span><span class="o">-</span><span class="nv">zero</span> <span class="err">→</span> <span class="nv">VMSA</span> <span class="nv">MMU</span> <span class="nv">present</span>
+<span class="nl">mcrne</span>  <span class="nb">p15</span><span class="err">,</span> <span class="mi">0</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="nv">c8</span><span class="o">,</span> <span class="nv">c7</span><span class="o">,</span> <span class="mi">0</span>  <span class="no">@</span> <span class="nv">invalidate</span> <span class="nv">I</span><span class="o">+</span><span class="nv">D</span> <span class="nv">TLBs</span></code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Stale VA→PA translations from an earlier boot stage would produce wrong
+results the instant the new page table is active.  <code>c8, c7, 0</code> invalidates
+both instruction and data TLBs.</p>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_step_3_configure_sctlr"><a class="anchor" href="#_step_3_configure_sctlr"></a>11.2.3. Step 3 — Configure SCTLR</h4>
+<div class="paragraph">
+<p>Read-modify-write on the System Control Register:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="link">Register description: https://developer.arm.com/documentation/ddi0601/2025-12/AArch32-Registers/SCTLR--System-Control-Register</code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="gdb">(gdb) info registers SCTLR
+SCTLR          0xc50078            12910712
+(gdb)</code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text">Bit   Name    Value   Meaning
+----  ------  ------  -------------------------------
+0     M       0       MMU disabled ❌
+1     A       0       Alignment check disabled
+2     C       0       Data cache disabled ❌
+3     W       1       Write buffer enabled
+11    Z       0       Branch prediction disabled
+12    I       1       Instruction cache enabled ✅
+13    V       0       Normal exception vectors (low)
+22    U       1       Unaligned access enabled</code></pre>
+</div>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_step_4_load_the_mmu_hardware_registers"><a class="anchor" href="#_step_4_load_the_mmu_hardware_registers"></a>11.2.4. Step 4 — Load the MMU hardware registers</h4>
+<div class="ulist">
+<ul>
+<li>
+<p>Set TTBR0, DACR, TTBCR registers: Refer arm manula for bit level details.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text">=&gt; 0x41c7c1c0 &lt;__armv7_mmu_cache_on+104&gt;:       mcrne   15, 0, r3, cr2, cr0, {0}  @ TTBR0 = page-table base (r3)
+   0x41c7c1c4 &lt;__armv7_mmu_cache_on+108&gt;:       mcrne   15, 0, r1, cr3, cr0, {0}  @ DACR  = domain 0 = Client
+   0x41c7c1c8 &lt;__armv7_mmu_cache_on+112&gt;:       mcrne   15, 0, r6, cr2, cr0, {2}  @ TTBCR</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>GDB dump of the registers to get more details.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="gdb">(gdb) info registers TTBR0 DACR TTBCR SCTLR
+TTBR0          0x40204000          1075855360
+DACR           0xfffffffd          -3
+TTBCR          0x0                 0
+SCTLR          0xc5507d            12931197
+(gdb)
+----</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Explanation of the registers</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text">SCTLR = 0xC5507D (Key Register)
+Important bits:
+Bit   Name   Value   Meaning
+----  -----  ------  ------------------------------
+0     M      1       MMU enabled ✅
+2     C      1       Data cache enabled ✅
+12    I      1       Instruction cache enabled ✅
+11    Z      0/1     Branch prediction (likely ON)
+1     A      0       Alignment check OFF
+22    U      1       Unaligned access allowed
+✅ Interpretation
+MMU: ON
+I-Cache: ON
+D-Cache: ON</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>This confirms:
+You are after MMU + cache enable, likely inside kernel execution.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text"># TTBR0 = 0x40204000
+This is the base address of your Level-1 page table (PGD)
+TTBR0 → 0x40204000 → PGD base</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>So your page tables live in physical memory around:0x40204000</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text"># TTBCR = 0x0
+TTBCR = 0 → Full address space uses TTBR0</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Meaning: No split between TTBR0 / TTBR1. Entire VA space uses single translation table
+👉 Typical for: Early Linux boot, Simpler ARM32 setups</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text"># DACR = 0xFFFFFFFD
+Domain Access Control Register:
+0xFFFFFFFD = 11111111 11111111 11111111 11111101
+Each domain = 2 bits
+Most domains → 11 = Manager mode (no permission checks)
+Domain 0 → 01 = Client mode (uses page permissions)</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Meaning: Kernel allows access freely (manager domains). Still respects permissions for domain 0. This is very typical Linux setup</p>
+</div>
+<div class="paragraph">
+<p><code>TTBR0</code> must be written <strong>before</strong> bit 0 of SCTLR is set.  If the MMU turned
+on before the page-table pointer was valid, the first TLB miss would attempt
+a walk from an uninitialised address.</p>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_step_5_isb_commit_sctlr_return"><a class="anchor" href="#_step_5_isb_commit_sctlr_return"></a>11.2.5. Step 5 — ISB + commit SCTLR + return</h4>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="armasm"><span class="nl">mcr</span>   <span class="nb">p15</span><span class="err">,</span> <span class="mi">0</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="nv">c7</span><span class="o">,</span> <span class="nv">c5</span><span class="o">,</span> <span class="mi">4</span>    <span class="no">@</span> <span class="nv">ISB</span> <span class="err">—</span> <span class="nv">discard</span> <span class="nv">speculative</span> <span class="nv">fetches</span>
+<span class="nl">mcr</span>   <span class="nb">p15</span><span class="err">,</span> <span class="mi">0</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="nv">c1</span><span class="o">,</span> <span class="nv">c0</span><span class="o">,</span> <span class="mi">0</span>    <span class="no">@</span> <span class="nv">write</span> <span class="nv">SCTLR</span> <span class="nv">with</span> <span class="nv">bit</span> <span class="mi">0</span> <span class="nv">set</span> <span class="err">—</span> <span class="nv">MMU</span> <span class="nv">ON</span>
+<span class="nl">mrc</span>   <span class="nb">p15</span><span class="err">,</span> <span class="mi">0</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="nv">c1</span><span class="o">,</span> <span class="nv">c0</span><span class="o">,</span> <span class="mi">0</span>    <span class="no">@</span> <span class="nv">read</span> <span class="nv">back</span> <span class="o">(</span><span class="nv">forces</span> <span class="nv">write</span> <span class="nv">to</span> <span class="nv">complete</span><span class="o">)</span>
+<span class="nl">mov</span>   <span class="nb">r0</span><span class="err">,</span> <span class="o">#</span><span class="mi">0</span>
+<span class="nl">mcr</span>   <span class="nb">p15</span><span class="err">,</span> <span class="mi">0</span><span class="o">,</span> <span class="nv">r0</span><span class="o">,</span> <span class="nv">c7</span><span class="o">,</span> <span class="nv">c5</span><span class="o">,</span> <span class="mi">4</span>    <span class="no">@</span> <span class="nv">ISB</span> <span class="err">—</span> <span class="nv">guarantee</span> <span class="nv">next</span> <span class="nv">fetch</span> <span class="nv">uses</span> <span class="nv">MMU</span>
+<span class="nl">mov</span>   <span class="nb">pc</span><span class="err">,</span> <span class="nv">r12</span>                   <span class="no">@</span> <span class="nv">return</span> <span class="o">(</span><span class="nv">first</span> <span class="nv">instruction</span> <span class="nv">translated</span> <span class="nv">by</span> <span class="nv">MMU</span><span class="o">)</span></code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="gdb">(gdb) info registers r0 r1 TTBCR SCTLR TTBR0 TTBR1 TTBR0_EL1 TTBR1_EL1 r6
+r0             0x0                 0
+r1             0xfffffffd          -3
+TTBCR          0x0                 0
+SCTLR          0xc5507d            12931197
+TTBR0          0x40204000          1075855360
+TTBR1          0x0                 0
+TTBR0_EL1      0x40204000          1075855360
+TTBR1_EL1      0x0                 0
+r6             0x0                 0
+(gdb)</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The first ISB flushes any instructions already in the fetch/decode stages that
+were brought in before the SCTLR write.</p>
+</div>
+<div class="paragraph">
+<p>Writing SCTLR with bit 0 set is the single instruction that activates the MMU.
+The immediate read-back is a standard ARMv7 idiom to prevent the store from
+being merged or reordered across the subsequent ISB.</p>
+</div>
+<div class="paragraph">
+<p>The second ISB guarantees that <code>mov pc, r12</code> — and every instruction after it
+— is fetched through the now-active translation table.</p>
+</div>
+<hr>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_end_result"><a class="anchor" href="#_end_result"></a>12. End result</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>After <code>mov pc, r12</code> returns, the CPU state is:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>MMU active — every instruction fetch and data access translated via the table
+at physical address <code>r3</code> (<code>0x40204000</code> in this session).</p>
+</li>
+<li>
+<p>Identity mapping in force — VA = PA everywhere, so the program counter value
+does not change meaning as the MMU enables.</p>
+</li>
+<li>
+<p>Instruction cache active — fetches from the RAM window are cached.</p>
+</li>
+<li>
+<p>Write buffer active — stores to RAM are buffered and reordered.</p>
+</li>
+<li>
+<p>Unaligned accesses transparently handled — ARMv6 model.</p>
+</li>
+<li>
+<p>TEX remap disabled — descriptors use direct C/B/TEX encoding.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>The decompressor now executes from cached memory and can decompress the kernel
+at full speed.  Once decompression completes, <code>__create_page_tables</code> in
+<code>arch/arm/kernel/head.S</code> rebuilds this table with accurate RAM extents and
+eventually replaces it entirely with <code>swapper_pg_dir</code> before branching to
+<code>start_kernel()</code>.</p>
+</div>
+<div class="paragraph">
+<p>Reference: <a href="https://people.kernel.org/linusw/how-the-arm32-kernel-starts" class="bare">https://people.kernel.org/linusw/how-the-arm32-kernel-starts</a><br>
+Reference: <a href="http://kofa.mmto.arizona.edu/kyu/arm101/mmu_regs.html" class="bare">http://kofa.mmto.arizona.edu/kyu/arm101/mmu_regs.html</a></p>
+</div>
+</div>
+</div>
+</div>
+<div id="footer">
+<div id="footer-text">
+Last updated 2026-03-28 18:58:04 -0400
+</div>
+</div>
+</body>
+</html>
