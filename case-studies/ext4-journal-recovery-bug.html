@@ -1,0 +1,1300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="generator" content="Asciidoctor 2.0.26">
+<title>EXT4 Root Filesystem Journal Recovery Issue</title>
+<link rel="stylesheet" href="../assets/apple-theme.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+<link rel="stylesheet" href="../assets/rouge-base16.dark.css">
+</head>
+<nav class="apple-nav"><a href="../index.html"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>Home</a><span class="sep">›</span><span class="current">ext4_journal_recovery_bug</span></nav>
+<body class="article toc2 toc-left">
+<div id="header">
+<h1>EXT4 Root Filesystem Journal Recovery Issue</h1>
+<div id="toc" class="toc2">
+<div id="toctitle">Table of Contents</div>
+<ul class="sectlevel1">
+<li><a href="#_journal_whats_that">1. Journal? What’s That?</a></li>
+<li><a href="#_lets_take_a_closer_look_at_the_bug">2. Let&#8217;s take a closer look at the bug</a>
+<ul class="sectlevel2">
+<li><a href="#_analysis_from_logs">2.1. Analysis from logs</a></li>
+<li><a href="#_copy_rootfs_using_u_boot_ums">2.2. Copy rootfs using U-Boot UMS</a></li>
+</ul>
+</li>
+<li><a href="#_inspect_file_img_with_debugfs">3. Inspect file.img with debugfs</a></li>
+<li><a href="#_journal_sequence_corruption_transaction_216">4. Journal Sequence Corruption (Transaction 216)</a></li>
+<li><a href="#_use_gdb_to_debug_further">5. Use GDB to Debug Further</a></li>
+<li><a href="#_detailed_logs_of_checksum_comparision_using_gdb">6. Detailed logs of checksum comparision using GDB</a></li>
+<li><a href="#ext4-journal-big-picture">7. EXT4 Journal Big Picture</a>
+<ul class="sectlevel2">
+<li><a href="#_block_header">7.1. Block Header</a></li>
+<li><a href="#_superblock">7.2. Superblock</a></li>
+<li><a href="#_descriptor_block">7.3. Descriptor Block</a></li>
+</ul>
+</li>
+<li><a href="#_data_block">8. Data Block</a></li>
+<li><a href="#_commit_block">9. Commit Block</a></li>
+<li><a href="#_references">10. References</a></li>
+</ul>
+</div>
+</div>
+<div id="content">
+<div class="sect1">
+<h2 id="_journal_whats_that"><a class="anchor" href="#_journal_whats_that"></a>1. Journal? What’s That?</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>See the section <a href="#ext4-journal-big-picture">EXT4 Journal Big Picture</a> for an
+overview.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_lets_take_a_closer_look_at_the_bug"><a class="anchor" href="#_lets_take_a_closer_look_at_the_bug"></a>2. Let&#8217;s take a closer look at the bug</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>During the boot process, the kernel attempts to mount the <strong>EXT4 root filesystem</strong>.
+If the filesystem’s <strong>journal area (JBD2)</strong> is corrupted, the journal recovery
+cannot complete successfully, resulting in mount failures or kernel panics.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="console"><span class="go">EXT4-fs (mmcblk0p3): INFO: recovery required on readonly filesystem
+EXT4-fs (mmcblk0p3): write access will be enabled during recovery
+JBD2: journal transaction 216 on mmcblk0p3-8 is corrupt.
+EXT4-fs (mmcblk0p3): error loading journal
+VFS: Cannot open root device "mmcblk0p3" or unknown-block(179,3): error -117</span></code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p><strong>Warning:</strong> Mount failed due to corrupted journal.</p>
+</div>
+<div class="sect2">
+<h3 id="_analysis_from_logs"><a class="anchor" href="#_analysis_from_logs"></a>2.1. Analysis from logs</h3>
+<div class="paragraph">
+<p>That kernel message means a JBD2 (journaling) transaction in
+the filesystem journal is corrupted — the kernel tried to replay transaction
+<strong>216</strong> for partition <strong>/dev/mmcblk0p3</strong> (journal device mmcblk0p3-8) and
+found it invalid, so recovery failed and the rootfs cannot be mounted
+normally.</p>
+</div>
+<div class="paragraph">
+<p>In situations like this, you might attempt to upgrade the system or boot
+from the secondary partition. However, if that partition mounts
+immediately, it will start writing to the EXT4 volume. This should be
+avoided, as any write operation can alter the filesystem state, making
+it impossible to reproduce or properly debug the issue.</p>
+</div>
+<div class="paragraph">
+<p><strong>We have a malfunctioning board on hand; let&#8217;s begin investigating the issue.</strong></p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_copy_rootfs_using_u_boot_ums"><a class="anchor" href="#_copy_rootfs_using_u_boot_ums"></a>2.2. Copy rootfs using U-Boot UMS</h3>
+<div class="ulist">
+<ul>
+<li>
+<p>Ensure automounting is disabled on the host.</p>
+</li>
+<li>
+<p>U-Boot commands:</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="console"><span class="gp">u-boot=&gt;</span><span class="w"> </span>mmc dev 0
+<span class="gp">switch to partitions #</span>0, OK
+<span class="go">mmc0(part 0) is current device
+</span><span class="gp">u-boot=&gt;</span><span class="w"> </span>mmc part
+<span class="go">
+Partition Map for MMC device 0  --   Partition Type: DOS
+
+Part    Start Sector    Num Sectors     UUID            Type
+  1     20480           204801          1c4daa58-01     83
+  2     225281          204801          1c4daa58-02     83
+  3     430082          7400001         1c4daa58-03     83 &lt;&lt;&lt; corrupted
+  4     7830083         7443517         1c4daa58-04     05 Extd
+  5     7833600         7400001         1c4daa58-05     83
+  6     15237120        36480           1c4daa58-06     83
+</span><span class="gp">u-boot=&gt;</span><span class="w"> </span>mmc dev 0
+<span class="gp">switch to partitions #</span>0, OK
+<span class="go">mmc0(part 0) is current device
+</span><span class="gp">u-boot=&gt;</span><span class="w"> </span>ums 0 mmc 0:3
+<span class="go">UMS: LUN 0, dev mmc 0, hwpart 0, sector 0x69002, count 0x70ea41
+CTRL+C - Operation aborted
+</span><span class="gp">u-boot=&gt;</span></code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Use host machine to copy the partition image. Copy partition
+image with <code>ddrescue</code>:</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="console"><span class="gp">$</span><span class="w"> </span><span class="nb">sudo </span>dmesg |tail
+<span class="go">usb 5-5.1: SerialNumber: 0d2069d6dd93540e
+usb-storage 5-5.1:1.0: USB Mass Storage device detected
+scsi host14: usb-storage 5-5.1:1.0
+scsi 14:0:0:0: Direct-Access     Linux    UMS disk 0       ffff PQ: 0 ANSI: 2
+sd 14:0:0:0: Attached scsi generic sg4 type 0
+sd 14:0:0:0: [sdf] 2097152 512-byte logical blocks: (1.07 GB/1.00 GiB)
+sd 14:0:0:0: [sdf] Write Protect is off
+sd 14:0:0:0: [sdf] Mode Sense: 0f 00 00 00
+sd 14:0:0:0: [sdf] Write cache: enabled, read cache: enabled, doesn't support DPO or FUA
+sd 14:0:0:0: [sdf] Attached SCSI removable disk
+
+</span><span class="gp">$</span><span class="w"> </span><span class="nb">sudo </span>ddrescue <span class="nt">-Df</span> /dev/sdf file.img
+<span class="go">GNU ddrescue 1.23
+Press Ctrl-C to interrupt
+     ipos:    1073 MB, non-trimmed:        0 B,  current rate:  13041 kB/s
+     opos:    1073 MB, non-scraped:        0 B,  average rate:  25565 kB/s
+non-tried:        0 B,  bad-sector:        0 B,    error rate:       0 B/s
+  rescued:    1073 MB,   bad areas:        0,        run time:         41s
+pct rescued:  100.00%, read errors:        0,  remaining time:         n/a
+                              time since last successful read:         n/a
+Finished</span></code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Reference: <a href="https://docs.u-boot.org/en/v2021.07/usage/ums.html" class="bare">https://docs.u-boot.org/en/v2021.07/usage/ums.html</a></p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>We’ve obtained a copy of the corrupted image — let’s begin analyzing it.</p>
+</li>
+</ul>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_inspect_file_img_with_debugfs"><a class="anchor" href="#_inspect_file_img_with_debugfs"></a>3. Inspect file.img with debugfs</h2>
+<div class="sectionbody">
+<div class="ulist">
+<ul>
+<li>
+<p>How to use debugfs?</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="console"><span class="go">sudo debugfs file.img</span></code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Use <code>ls -lr</code> to find the last modified file:</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="console"><span class="go">      2   40755 (2)      0      0    4096  3-Mar-2023 04:49 .
+      2   40755 (2)      0      0    4096  3-Mar-2023 04:49 ..
+</span><span class="c">    .....
+    .....
+</span><span class="go">    172   40755 (2)      0      0    4096  9-Mar-2018 07:34 boot
+    175   40755 (2)      0      0    4096  9-Mar-2018 07:34 dev
+    176   40755 (2)      0      0    4096 18-Mar-2023 10:25 etc &lt;&lt;&lt;&lt;&lt;
+   1037   40755 (2)      0      0    4096  9-Mar-2018 07:34 home
+
+  Inode No. | Perm
+    24365  100644 (1)      0      0     279 18-Mar-2023 10:25 wpa_supplicant.conf&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;
+     1025  100644 (1)      0      0     681  9-Mar-2018 07:34 xattr.con
+     1026   40755 (2)      0      0    4096  9-Mar-2018 07:34 xdg
+    24393  100600 (1)      0      0       0  3-Mar-2023 04:49 .pwd.lock
+    24395   40000 (2)      0      0    4096  3-Mar-2023 04:49 credstore
+    24396   40000 (2)      0      0    4096  3-Mar-2023 04:49 credstore.encrypted
+      464  100644 (1)      0      0      44 18-Mar-2023 10:24 adjtime &lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;</span></code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Dump inode for more info:</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="console"><span class="go">debugfs:  stat <i class="conum" data-value="24365"></i><b>(24365)</b>
+Inode: 24365   Type: regular    Mode:  0644   Flags: 0x80000
+Generation: 2938999718    Version: 0x00000000:00000001
+User:     0   Group:     0   Project:     0   Size: 279
+File ACL: 0
+Links: 1   Blockcount: 8
+Fragment:  Address: 0    Number: 0    Size: 0
+ ctime: 0x6415c9cb:ae788608 -- Sat Mar 18 10:25:15 2023
+ atime: 0x6415c9d6:069983c0 -- Sat Mar 18 10:25:26 2023
+ mtime: 0x6415c9cb:ac903f48 -- Sat Mar 18 10:25:15 2023
+crtime: 0x6415c9cb:ac903f48 -- Sat Mar 18 10:25:15 2023
+Size of extra inode fields: 32
+Inode checksum: 0x3a0e8a44
+EXTENTS:
+(0):204805</span></code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Dump journal transaction details:</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="console"><span class="go">debugfs:  logdump -aO
+Found expected sequence 212, type 2 (commit block) at block 151
+</span><span class="c">....
+</span><span class="go">Found expected sequence 216, type 1 (descriptor block) at block 174
+Dumping descriptor block, sequence 216, at block 174:
+  FS block 469 logged at journal block 175 (flags 0x0)
+  FS block 530806 logged at journal block 185 (flags 0x2)
+  FS block 8514 logged at journal block 186 (flags 0xa)
+Found expected sequence 216, type 2 (commit block) at block 187</span></code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Map FS block → inode → file:</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="console"><span class="gp">debugfs&gt;</span><span class="w"> </span>icheck 530804
+<span class="go">530804 127748 &lt;&lt;&lt; inode number
+</span><span class="gp">debugfs&gt;</span><span class="w"> </span>ncheck 127748
+<span class="go">127748 /root/.cache/gstreamer-1.0</span></code></pre>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_journal_sequence_corruption_transaction_216"><a class="anchor" href="#_journal_sequence_corruption_transaction_216"></a>4. Journal Sequence Corruption (Transaction 216)</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p><strong>Analyse</strong></p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="console"><span class="go">Found expected sequence 216, type 1 (descriptor block) at block
+Dumping descriptor block, sequence 216, at block 174:
+FS block 469 logged at journal block 175 (flags 0x0)
+FS block 1 logged at journal block 176 (flags 0x2)
+FS block 515 logged at journal block 177 (flags 0x2)
+FS block 1663 logged at journal block 178 (flags 0x2)
+FS block 139263 logged at journal block 179 (flags 0x2)
+FS block 459 logged at journal block 180 (flags 0x2)
+FS block 548 logged at journal block 181 (flags 0x2)
+FS block 8501 logged at journal block 182 (flags 0x2)
+FS block 524301 logged at journal block 183 (flags 0x2)
+FS block 524314 logged at journal block 184 (flags 0x2)
+FS block 530806 logged at journal block 185 (flags 0x2)
+FS block 8514 logged at journal block 186 (flags 0xa)
+Found expected sequence 216, type 2 (commit block) at block
+Found sequence 187 (not 217) at block 188: end of journal. &lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt; Issue
+Found expected sequence 187, type 2 (commit block) at block
+Found sequence 188 (not 218) at block 189: end of journal.  &lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt; Issue
+Found expected sequence 188, type 1 (descriptor block) at block</span></code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p><strong>Observation</strong></p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Transaction 216 (descriptor + commit) completed ✅</p>
+</li>
+<li>
+<p>Next expected transaction 217, but journal jumps to 187 ❌</p>
+</li>
+<li>
+<p>Sequence wrap-around indicates premature reset or overwritten tail blocks</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p><strong>Root cause hypotheses:</strong></p>
+</div>
+<div class="olist arabic">
+<ol class="arabic">
+<li>
+<p>Power cut during journal writeback</p>
+</li>
+<li>
+<p>Partial block update or DMA write failure</p>
+</li>
+<li>
+<p>JBD2 transaction pointer corruption</p>
+</li>
+</ol>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="console"><span class="go">* Transaction 216 is complete (descriptor + commit). ✅
+* The next expected transaction should be 217, but instead the journal suddenly
+jumps to 187. ❌
+* That wrap-around (187 &lt; 216) signals that the journal sequence number reset
+prematurely, or the ring buffer pointer wrapped incorrectly.
+* Then it tries to read further but again sees 188, not 218, confirming sequence
+corruption or overwritten tail blocks.</span></code></pre>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_use_gdb_to_debug_further"><a class="anchor" href="#_use_gdb_to_debug_further"></a>5. Use GDB to Debug Further</h2>
+<div class="sectionbody">
+<div class="ulist">
+<ul>
+<li>
+<p>Dump <code>descriptor_block</code>, <code>data_block</code>, and <code>commit_block</code>.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>Reference: <a href="https://elixir.bootlin.com/linux/v6.1.22/source/fs/jbd2/recovery.c#L201" class="bare">https://elixir.bootlin.com/linux/v6.1.22/source/fs/jbd2/recovery.c#L201</a></p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="console"><span class="gp">  (gdb) p *(journal_header_t *) bh-&gt;</span>b_data
+<span class="gp">  $</span>55 <span class="o">=</span> <span class="o">{</span>
+<span class="go">    h_magic = 2553887680,
+    h_blocktype = 16777216,
+    h_sequence = 3623878656
+  }
+</span><span class="gp">  (gdb) p * (struct commit_header *) (bh-&gt;</span>b_data<span class="o">)</span>
+<span class="gp">  $</span>66 <span class="o">=</span> <span class="o">{</span>
+<span class="go">    h_magic = 2553887680,
+    h_blocktype = 33554432,
+    h_sequence = 3623878656,
+    h_chksum_type = 0 '\000',
+    h_chksum_size = 0 '\000',
+    h_padding = "\000",
+    h_chksum = {1089293465, 0, 0, 0, 0, 0, 0, 0},
+    h_commit_sec = 1642148533370880000,
+    h_commit_nsec = 4125055546
+  }
+</span><span class="gp">  (gdb) ptype (struct commit_header *) (bh-&gt;</span>b_data<span class="o">)</span>
+<span class="go">  type = struct commit_header {
+</span><span class="gp">      __be32 h_magic;</span><span class="w">
+</span><span class="gp">      __be32 h_blocktype;</span><span class="w">
+</span><span class="gp">      __be32 h_sequence;</span><span class="w">
+</span><span class="gp">      unsigned char h_chksum_type;</span><span class="w">
+</span><span class="gp">      unsigned char h_chksum_size;</span><span class="w">
+</span><span class="gp">      unsigned char h_padding[2];</span><span class="w">
+</span><span class="gp">      __be32 h_chksum[8];</span><span class="w">
+</span><span class="gp">      __be64 h_commit_sec;</span><span class="w">
+</span><span class="gp">      __be32 h_commit_nsec;</span><span class="w">
+</span><span class="go">  } *
+  (gdb
+(gdb)
+Continuing.
+
+t_blocknr = 0xb6020000
+</span><span class="gp">	0x000002b6 =&gt;</span><span class="w"> </span>694 decimal <span class="o">=&gt;</span> FS Block Size
+<span class="go">t_flags = 0x200
+</span><span class="gp">	0x0002 =&gt;</span><span class="w"> </span>flags 02
+<span class="go">sequence_nr = 0xffffffffffffffcf
+</span><span class="gp">	0xcf =&gt;</span><span class="w"> </span>200</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>This provides valuable information; we can proceed to set a breakpoint to
+capture the exact commit block.</p>
+</li>
+</ul>
+</div>
+<div class="openblock">
+<div class="content">
+<div class="ulist">
+<ul>
+<li>
+<p>FS Block:         649</p>
+</li>
+<li>
+<p>Flag:             0x2</p>
+</li>
+<li>
+<p>Sequence Number:  200</p>
+</li>
+</ul>
+</div>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Dump <code>Commit_time</code> to map it with the last modified file.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="console"><span class="go">Breakpoint 4, do_one_pass (journal=journal@entry=0xffff888003b03000, info=info@entry=0xffffc90000013bc4, pass=pass@entry=PASS_SCAN) at fs/jbd2/recovery.c:744
+744                             commit_time = be64_to_cpu(
+
+==== JBD2_COMMIT_BLOCK ====
+
+---- Block Number ----
+</span><span class="gp">$</span>274 <span class="o">=</span> 188
+<span class="go">
+---- Sequence number ----
+</span><span class="gp">$</span>275 <span class="o">=</span> 216
+<span class="go">(gdb) p commit_time
+</span><span class="gp">$</span>277 <span class="o">=</span> 1679149590
+<span class="go">(gdb) p/x commit_time
+</span><span class="gp">$</span>278 <span class="o">=</span> 0x6415ca16
+<span class="go">(gdb)</span></code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Use the <code>date</code> command to display the output in a
+human-readable format.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="console"><span class="gp">$</span><span class="w"> </span><span class="nb">date</span> <span class="nt">-d</span> @1679149590
+<span class="go">Sat 18 Mar 2023 10:26:30 AM EDT</span></code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Dump <code>Checksum</code> of each commit block, especially transaction 216:</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="console"><span class="gp">jbd2_commit_block_csum_verify (buf=&lt;optimized out&gt;</span>, <span class="nv">j</span><span class="o">=</span>&lt;optimized out&gt;<span class="o">)</span> at fs/jbd2/recovery.c:433
+<span class="gp">433             provided = h-&gt;</span>h_chksum[0]<span class="p">;</span>
+<span class="go">(gdb) list
+429             if (!jbd2_journal_has_csum_v2or3(j))
+</span><span class="gp">430                     return 1;</span><span class="w">
+</span><span class="go">431
+</span><span class="gp">432             h = buf;</span><span class="w">
+</span><span class="gp">433             provided = h-&gt;</span>h_chksum[0]<span class="p">;</span>
+<span class="gp">434             h-&gt;</span>h_chksum[0] <span class="o">=</span> 0<span class="p">;</span>
+<span class="gp">435             calculated = jbd2_chksum(j, j-&gt;</span>j_csum_seed, buf, j-&gt;j_blocksize<span class="o">)</span><span class="p">;</span>
+<span class="gp">436             h-&gt;</span>h_chksum[0] <span class="o">=</span> provided<span class="p">;</span>
+<span class="go">437
+</span><span class="gp">438             return provided == cpu_to_be32(calculated);</span><span class="w">
+</span><span class="go">(gdb)
+(gdb)
+==== JBD2_COMMIT_BLOCK ====
+
+---- Block Number ----
+</span><span class="gp">$</span>414 <span class="o">=</span> 188
+<span class="go">
+---- Sequence number ----
+</span><span class="gp">$</span>415 <span class="o">=</span> 216
+<span class="go">
+---- Commit Time ----
+</span><span class="gp">$</span>416 <span class="o">=</span> 1679149590
+<span class="go">
+---- Last Trans Compile Time ----
+</span><span class="gp">$</span>417 <span class="o">=</span> 1679149588
+<span class="go">(gdb)
+Continuing.
+
+</span><span class="gp">Breakpoint 5, jbd2_commit_block_csum_verify (buf=&lt;optimized out&gt;</span>, <span class="nv">j</span><span class="o">=</span>&lt;optimized out&gt;<span class="o">)</span> at fs/jbd2/recovery.c:436
+<span class="gp">436             h-&gt;</span>h_chksum[0] <span class="o">=</span> provided<span class="p">;</span>
+<span class="gp">$</span>418 <span class="o">=</span> 0x6f3d7f01
+<span class="gp">$</span>419 <span class="o">=</span> 0x40ed4c99
+<span class="go">(gdb)
+Continuing.
+(gdb)</span></code></pre>
+</div>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+Ah! This appears to be the issue. The checksums are
+clearly failing to match, causing the problem.
+</td>
+</tr>
+</table>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Transaction 216</p>
+</li>
+<li>
+<p>Provided Checksum: 0x40ed4c99</p>
+</li>
+<li>
+<p>Calculated Checksum: 0x6f3d7f01</p>
+</li>
+</ul>
+</div>
+<div class="paragraph text-center">
+<p><strong>GDB Commands Used</strong></p>
+</div>
+<div class="paragraph">
+<p>To debug and inspect the journal recovery process, the following <code>gdb</code> breakpoints and commands were set:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="console"><span class="go">(gdb) b fs/jbd2/recovery.c:455
+Breakpoint 1 at 0xffffffff81aea45d: file fs/jbd2/recovery.c, line 455.
+
+(gdb) b fs/jbd2/recovery.c:430
+Breakpoint 2 at 0xffffffff81aea331: file fs/jbd2/recovery.c, line 430.
+
+(gdb) commands 1
+Type commands for breakpoint(s) 1, one per line.
+End with a line saying just "end".
+</span><span class="gp">&gt;</span><span class="w"> </span>p/x provided
+<span class="gp">&gt;</span><span class="w"> </span>p/x <span class="o">((</span>calculated &amp; 0xff<span class="o">)</span> <span class="o">&lt;&lt;</span> <span class="no">24</span><span class="sh">) | ((calculated &amp; 0xff00) &lt;&lt; 8) | ((calculated &amp; 0xff0000) &gt;&gt; 8) | ((calculated &amp; 0xff000000) &gt;&gt; 24)
+</span><span class="gp">&gt;</span><span class="w"> </span><span class="sh">end
+</span><span class="go">
+(gdb) commands 2
+Type commands for breakpoint(s) 2, one per line.
+End with a line saying just "end".
+</span><span class="gp">&gt;</span><span class="w"> </span>p/x provided
+<span class="gp">&gt;</span><span class="w"> </span>p/x <span class="o">((</span>calculated &amp; 0xff<span class="o">)</span> <span class="o">&lt;&lt;</span> <span class="no">24</span><span class="sh">) | ((calculated &amp; 0xff00) &lt;&lt; 8) | ((calculated &amp; 0xff0000) &gt;&gt; 8) | ((calculated &amp; 0xff000000) &gt;&gt; 24)
+</span><span class="gp">&gt;</span><span class="w"> </span><span class="sh">end
+</span><span class="go">
+(gdb) c
+Continuing.</span></code></pre>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_detailed_logs_of_checksum_comparision_using_gdb"><a class="anchor" href="#_detailed_logs_of_checksum_comparision_using_gdb"></a>6. Detailed logs of checksum comparision using GDB</h2>
+<div class="sectionbody">
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="console"><span class="go">(gdb) b fs/jbd2/recovery.c:455
+Breakpoint 1 at 0xffffffff81aea45d: file fs/jbd2/recovery.c, line 455.
+(gdb) b fs/jbd2/recovery.c:430
+Breakpoint 2 at 0xffffffff81aea331: file fs/jbd2/recovery.c, line 430.
+(gdb) commands 1
+Type commands for breakpoint(s) 1, one per line.
+End with a line saying just "end".
+</span><span class="gp">&gt;</span>p/x provided
+<span class="gp">&gt;</span>p/x <span class="o">((</span>calculated &amp; 0xff<span class="o">)</span> <span class="o">&lt;&lt;</span> <span class="no">24</span><span class="sh">) | ((calculated &amp; 0xff00) &lt;&lt; 8) | ((calculated &amp; 0xff0000) &gt;&gt; 8) | ((calculated &amp; 0xff000000) &gt;&gt; 24)
+</span><span class="gp">&gt;</span><span class="sh">end
+</span><span class="go">(gdb) commands 2
+Type commands for breakpoint(s) 2, one per line.
+End with a line saying just "end".
+</span><span class="gp">&gt;</span>p/x provided
+<span class="gp">&gt;</span>p/x <span class="o">((</span>calculated &amp; 0xff<span class="o">)</span> <span class="o">&lt;&lt;</span> <span class="no">24</span><span class="sh">) | ((calculated &amp; 0xff00) &lt;&lt; 8) | ((calculated &amp; 0xff0000) &gt;&gt; 8) | ((calculated &amp; 0xff000000) &gt;&gt; 24)
+</span><span class="gp">&gt;</span><span class="sh">end
+</span><span class="go">(gdb) c
+Continuing.
+
+</span><span class="gp">Breakpoint 2, jbd2_commit_block_csum_verify (buf=&lt;optimized out&gt;</span>, <span class="nv">j</span><span class="o">=</span>&lt;optimized out&gt;<span class="o">)</span> at fs/jbd2/recovery.c:430
+<span class="gp">430             printk(KERN_ERR "JBD2: commit header checksum verification\n");</span><span class="w">
+</span><span class="gp">$</span>1 <span class="o">=</span> 0x67b1c9a3
+<span class="gp">$</span>2 <span class="o">=</span> 0x67b1c9a3 <span class="o">&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;</span>&lt;199 Commit block checksum
+<span class="go">(gdb)
+Continuing.
+
+</span><span class="gp">Breakpoint 2, jbd2_commit_block_csum_verify (buf=&lt;optimized out&gt;</span>, <span class="nv">j</span><span class="o">=</span>&lt;optimized out&gt;<span class="o">)</span> at fs/jbd2/recovery.c:430
+<span class="gp">430             printk(KERN_ERR "JBD2: commit header checksum verification\n");</span><span class="w">
+</span><span class="gp">$</span>3 <span class="o">=</span> 0xa83f5c01
+<span class="gp">$</span>4 <span class="o">=</span> 0xa83f5c01 <span class="o">&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;</span>&lt;200 Commit block checksum
+<span class="go">(gdb)
+Continuing.
+
+</span><span class="gp">Breakpoint 2, jbd2_commit_block_csum_verify (buf=&lt;optimized out&gt;</span>, <span class="nv">j</span><span class="o">=</span>&lt;optimized out&gt;<span class="o">)</span> at fs/jbd2/recovery.c:430
+<span class="gp">430             printk(KERN_ERR "JBD2: commit header checksum verification\n");</span><span class="w">
+</span><span class="gp">$</span>5 <span class="o">=</span> 0xccfb622
+<span class="gp">$</span>6 <span class="o">=</span> 0xccfb622 <span class="o">&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;</span>&lt;201 Commit block checksum
+<span class="go">(gdb)
+Continuing.
+
+</span><span class="gp">Breakpoint 2, jbd2_commit_block_csum_verify (buf=&lt;optimized out&gt;</span>, <span class="nv">j</span><span class="o">=</span>&lt;optimized out&gt;<span class="o">)</span> at fs/jbd2/recovery.c:430
+<span class="gp">430             printk(KERN_ERR "JBD2: commit header checksum verification\n");</span><span class="w">
+</span><span class="gp">$</span>7 <span class="o">=</span> 0x9e4e49e1
+<span class="gp">$</span>8 <span class="o">=</span> 0x9e4e49e1 <span class="o">&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;</span>&lt;202 Commit block checksum
+<span class="go">(gdb)
+Continuing.
+
+</span><span class="gp">Breakpoint 2, jbd2_commit_block_csum_verify (buf=&lt;optimized out&gt;</span>, <span class="nv">j</span><span class="o">=</span>&lt;optimized out&gt;<span class="o">)</span> at fs/jbd2/recovery.c:430
+<span class="gp">430             printk(KERN_ERR "JBD2: commit header checksum verification\n");</span><span class="w">
+</span><span class="gp">$</span>9 <span class="o">=</span> 0xba0d9629
+<span class="gp">$</span>10 <span class="o">=</span> 0xba0d9629 <span class="o">&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;</span>&lt;203 Commit block checksum
+<span class="go">(gdb)
+Continuing.
+
+</span><span class="gp">Breakpoint 2, jbd2_commit_block_csum_verify (buf=&lt;optimized out&gt;</span>, <span class="nv">j</span><span class="o">=</span>&lt;optimized out&gt;<span class="o">)</span> at fs/jbd2/recovery.c:430
+<span class="gp">430             printk(KERN_ERR "JBD2: commit header checksum verification\n");</span><span class="w">
+</span><span class="gp">$</span>11 <span class="o">=</span> 0x53b45195
+<span class="gp">$</span>12 <span class="o">=</span> 0x53b45195 <span class="o">&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;</span>&lt;204 Commit block checksum
+<span class="go">(gdb)
+Continuing.
+
+</span><span class="gp">Breakpoint 2, jbd2_commit_block_csum_verify (buf=&lt;optimized out&gt;</span>, <span class="nv">j</span><span class="o">=</span>&lt;optimized out&gt;<span class="o">)</span> at fs/jbd2/recovery.c:430
+<span class="gp">430             printk(KERN_ERR "JBD2: commit header checksum verification\n");</span><span class="w">
+</span><span class="gp">$</span>13 <span class="o">=</span> 0x8da0bff8
+<span class="gp">$</span>14 <span class="o">=</span> 0x8da0bff8 <span class="o">&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;</span>&lt;205 Commit block checksum
+<span class="go">(gdb)
+Continuing.
+
+</span><span class="gp">Breakpoint 2, jbd2_commit_block_csum_verify (buf=&lt;optimized out&gt;</span>, <span class="nv">j</span><span class="o">=</span>&lt;optimized out&gt;<span class="o">)</span> at fs/jbd2/recovery.c:430
+<span class="gp">430             printk(KERN_ERR "JBD2: commit header checksum verification\n");</span><span class="w">
+</span><span class="gp">$</span>15 <span class="o">=</span> 0xd288eb3c
+<span class="gp">$</span>16 <span class="o">=</span> 0xd288eb3c <span class="o">&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;</span>&lt;206 Commit block checksum
+<span class="go">(gdb)
+Continuing.
+
+</span><span class="gp">Breakpoint 2, jbd2_commit_block_csum_verify (buf=&lt;optimized out&gt;</span>, <span class="nv">j</span><span class="o">=</span>&lt;optimized out&gt;<span class="o">)</span> at fs/jbd2/recovery.c:430
+<span class="gp">430             printk(KERN_ERR "JBD2: commit header checksum verification\n");</span><span class="w">
+</span><span class="gp">$</span>17 <span class="o">=</span> 0x9dd8d5b2
+<span class="gp">$</span>18 <span class="o">=</span> 0x9dd8d5b2 <span class="o">&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;</span>&lt;207 Commit block checksum
+<span class="go">(gdb)
+Continuing.
+
+</span><span class="gp">Breakpoint 2, jbd2_commit_block_csum_verify (buf=&lt;optimized out&gt;</span>, <span class="nv">j</span><span class="o">=</span>&lt;optimized out&gt;<span class="o">)</span> at fs/jbd2/recovery.c:430
+<span class="gp">430             printk(KERN_ERR "JBD2: commit header checksum verification\n");</span><span class="w">
+</span><span class="gp">$</span>19 <span class="o">=</span> 0xc9391ec8
+<span class="gp">$</span>20 <span class="o">=</span> 0xc9391ec8<span class="o">&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;</span>&lt;208 Commit block checksum
+<span class="go">(gdb)
+Continuing.
+
+</span><span class="gp">Breakpoint 2, jbd2_commit_block_csum_verify (buf=&lt;optimized out&gt;</span>, <span class="nv">j</span><span class="o">=</span>&lt;optimized out&gt;<span class="o">)</span> at fs/jbd2/recovery.c:430
+<span class="gp">430             printk(KERN_ERR "JBD2: commit header checksum verification\n");</span><span class="w">
+</span><span class="gp">$</span>21 <span class="o">=</span> 0xf23b95d2
+<span class="gp">$</span>22 <span class="o">=</span> 0xf23b95d2<span class="o">&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;</span>&lt;209 Commit block checksum
+<span class="go">(gdb)
+Continuing.
+
+</span><span class="gp">Breakpoint 2, jbd2_commit_block_csum_verify (buf=&lt;optimized out&gt;</span>, <span class="nv">j</span><span class="o">=</span>&lt;optimized out&gt;<span class="o">)</span> at fs/jbd2/recovery.c:430
+<span class="gp">430             printk(KERN_ERR "JBD2: commit header checksum verification\n");</span><span class="w">
+</span><span class="gp">$</span>23 <span class="o">=</span> 0x5d9c1f95
+<span class="gp">$</span>24 <span class="o">=</span> 0x5d9c1f95<span class="o">&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;</span>&lt;210 Commit block checksum
+<span class="go">(gdb)
+Continuing.
+
+</span><span class="gp">Breakpoint 2, jbd2_commit_block_csum_verify (buf=&lt;optimized out&gt;</span>, <span class="nv">j</span><span class="o">=</span>&lt;optimized out&gt;<span class="o">)</span> at fs/jbd2/recovery.c:430
+<span class="gp">430             printk(KERN_ERR "JBD2: commit header checksum verification\n");</span><span class="w">
+</span><span class="gp">$</span>25 <span class="o">=</span> 0xebb3fdc
+<span class="gp">$</span>26 <span class="o">=</span> 0xebb3fdc<span class="o">&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;</span>&lt;211 Commit block checksum
+<span class="go">(gdb)
+Continuing.
+
+</span><span class="gp">Breakpoint 2, jbd2_commit_block_csum_verify (buf=&lt;optimized out&gt;</span>, <span class="nv">j</span><span class="o">=</span>&lt;optimized out&gt;<span class="o">)</span> at fs/jbd2/recovery.c:430
+<span class="gp">430             printk(KERN_ERR "JBD2: commit header checksum verification\n");</span><span class="w">
+</span><span class="gp">$</span>27 <span class="o">=</span> 0x1fdb442
+<span class="gp">$</span>28 <span class="o">=</span> 0x1fdb442<span class="o">&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;</span>&lt;212 Commit block checksum
+<span class="go">(gdb)
+Continuing.
+
+</span><span class="gp">Breakpoint 2, jbd2_commit_block_csum_verify (buf=&lt;optimized out&gt;</span>, <span class="nv">j</span><span class="o">=</span>&lt;optimized out&gt;<span class="o">)</span> at fs/jbd2/recovery.c:430
+<span class="gp">430             printk(KERN_ERR "JBD2: commit header checksum verification\n");</span><span class="w">
+</span><span class="gp">$</span>29 <span class="o">=</span> 0xd3bbf9f
+<span class="gp">$</span>30 <span class="o">=</span> 0xd3bbf9f<span class="o">&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;</span>&lt;213 Commit block checksum
+<span class="go">(gdb)
+Continuing.
+
+</span><span class="gp">Breakpoint 2, jbd2_commit_block_csum_verify (buf=&lt;optimized out&gt;</span>, <span class="nv">j</span><span class="o">=</span>&lt;optimized out&gt;<span class="o">)</span> at fs/jbd2/recovery.c:430
+<span class="gp">430             printk(KERN_ERR "JBD2: commit header checksum verification\n");</span><span class="w">
+</span><span class="gp">$</span>31 <span class="o">=</span> 0xf4164ac9
+<span class="gp">$</span>32 <span class="o">=</span> 0xf4164ac9<span class="o">&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;</span>&lt;214 Commit block checksum
+<span class="go">(gdb)
+Continuing.
+
+</span><span class="gp">Breakpoint 2, jbd2_commit_block_csum_verify (buf=&lt;optimized out&gt;</span>, <span class="nv">j</span><span class="o">=</span>&lt;optimized out&gt;<span class="o">)</span> at fs/jbd2/recovery.c:430
+<span class="gp">430             printk(KERN_ERR "JBD2: commit header checksum verification\n");</span><span class="w">
+</span><span class="gp">$</span>33 <span class="o">=</span> 0x91a54af2
+<span class="gp">$</span>34 <span class="o">=</span> 0x91a54af2<span class="o">&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;</span>&lt;215 Commit block checksum
+<span class="go">(gdb)
+Continuing.
+
+</span><span class="gp">Breakpoint 2, jbd2_commit_block_csum_verify (buf=&lt;optimized out&gt;</span>, <span class="nv">j</span><span class="o">=</span>&lt;optimized out&gt;<span class="o">)</span> at fs/jbd2/recovery.c:430
+<span class="gp">430             printk(KERN_ERR "JBD2: commit header checksum verification\n");</span><span class="w">
+</span><span class="gp">$</span>35 <span class="o">=</span> 0x40ed4c99 <span class="o">&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;</span> <span class="no">Value</span><span class="sh"> from Commit header
+</span><span class="gp">$</span><span class="sh">36 = 0x6f3d7f01&lt;&lt;&lt;&lt;Calculated Value &lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;216 Commit block checksum (Mismatch)
+</span><span class="go">Only partial data (a single block) has been written. Let's calculate the checksum of the commit header—if it is correct, this indicates that the data itself was not properly written due to the power shutdown.
+(gdb)
+Continuing.
+
+</span><span class="gp">Breakpoint 1, jbd2_commit_block_csum_verify_partial (buf=&lt;optimized out&gt;</span>, <span class="nv">j</span><span class="o">=</span>0xffff888003b03000<span class="o">)</span> at fs/jbd2/recovery.c:455
+<span class="gp">455     printk(KERN_ERR "Partial: JBD2: commit header checksum verification\n");</span><span class="w">
+</span><span class="gp">$</span>37 <span class="o">=</span> 0x40ed4c99  <span class="o">&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;</span> <span class="no">Value</span><span class="sh"> from Commit header
+</span><span class="gp">$</span><span class="sh">38 = 0x40ed4c99 &lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;216 The commit header check matches, which means we can continue with the replay.
+</span><span class="go">(gdb)
+</span></code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p><strong>Conclusion of Bug Analysis</strong></p>
+</div>
+<div class="paragraph">
+<p>During the investigation, we observed checksum mismatches in the commit block verification process.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="console"><span class="gp">Breakpoint 2, jbd2_commit_block_csum_verify (buf=&lt;optimized out&gt;</span>, <span class="nv">j</span><span class="o">=</span>&lt;optimized out&gt;<span class="o">)</span>
+<span class="go">at fs/jbd2/recovery.c:430
+</span><span class="gp">430  printk(KERN_ERR "JBD2: commit header checksum verification\n");</span><span class="w">
+</span><span class="go">
+</span><span class="gp">$</span>35 <span class="o">=</span> 0x40ed4c99   <span class="o">&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;</span> <span class="no">Value</span><span class="sh"> from Commit header
+</span><span class="gp">$</span><span class="sh">36 = 0x6f3d7f01   &lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt; Calculated Value (Mismatch for Transaction 216)</span></code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p><strong>Observation</strong>
+Only partial data (a single block) was written.
+If the commit header checksum is valid, this indicates that the data blocks were
+not fully written, likely due to a power failure during the transaction.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="console"><span class="gp">Breakpoint 1, jbd2_commit_block_csum_verify_partial (buf=&lt;optimized out&gt;</span>, <span class="nv">j</span><span class="o">=</span>0xffff888003b03000<span class="o">)</span>
+<span class="go">at fs/jbd2/recovery.c:455
+</span><span class="gp">455  printk(KERN_ERR "Partial: JBD2: commit header checksum verification\n");</span><span class="w">
+</span><span class="go">
+</span><span class="gp">$</span>37 <span class="o">=</span> 0x40ed4c99  <span class="o">&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;</span> <span class="no">Value</span><span class="sh"> from Commit header
+</span><span class="gp">$</span><span class="sh">38 = 0x40ed4c99  &lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt; Calculated Value (Match for Transaction 216)</span></code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p><strong>Conclusion</strong>
+The commit header checksum matches during partial verification, which confirms
+that the journal replay can safely proceed, as the header integrity remains
+intact.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="ext4-journal-big-picture"><a class="anchor" href="#ext4-journal-big-picture"></a>7. EXT4 Journal Big Picture</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Let&#8217;s understand journaling from the basics.</p>
+</div>
+<div class="paragraph">
+<p>It is recommended to read the kernel documentation for more details:
+<a href="https://www.kernel.org/doc/Documentation/filesystems/ext4/journal.rst">EXT4 Journal Documentation</a></p>
+</div>
+<div class="listingblock text-center">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="ascii">+-------------------+
+|   Superblock      |
+|  (journal_header) |
++-------------------+
+          |
+          v
++-------------------+
+|  Descriptor Block |
+|  (journal_header) |
++-------------------+
+          |
+          v
++-------------------+
+|    Data Block(s)  |
+|  (journal_header) |
++-------------------+
+          |
+          v
++-------------------+
+|    Commit Block   |
+|  (journal_header) |
++-------------------+
+          |
+          v
++-------------------+
+|  Descriptor Block |
+|  (journal_header) |
++-------------------+
+          |
+         ...</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><strong>Superblock</strong></p>
+</li>
+<li>
+<p><strong>Descriptor block</strong> (followed by <strong>data blocks</strong> or a <strong>revocation block</strong>)</p>
+</li>
+<li>
+<p>Additional data or revocations</p>
+</li>
+<li>
+<p><strong>Commit block</strong></p>
+</li>
+<li>
+<p>[More transactions…]</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>Each transaction begins with either a <strong>descriptor block with data</strong> or a
+<strong>revocation block</strong>. A completed transaction <strong>always ends with a commit block</strong>.</p>
+</div>
+<div class="sect2">
+<h3 id="_block_header"><a class="anchor" href="#_block_header"></a>7.1. Block Header</h3>
+<div class="paragraph">
+<p>Every block in the EXT4 journal begins with a <strong>common 12-byte header</strong> defined
+by <code>struct journal_header_s</code>:</p>
+</div>
+<div class="paragraph">
+<p>Every journal block begins with a standard 12-byte header called <code>journal_header_s</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="ascii">+-----------------+-----------------+-----------------+
+| Offset 0x0      | Offset 0x4      | Offset 0x8      |
++-----------------+-----------------+-----------------+
+| h_magic         | h_blocktype     | h_sequence      |
+| (Magic number)  | (Block type)    | (Transaction ID)|
++-----------------+-----------------+-----------------+</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>A journal block can be one of the following types:</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="ascii">+-------+-----------------------------------------------+
+| Value | Description                                   |
++-------+-----------------------------------------------+
+| 1     | Descriptor Block                              |
+|       | -&gt; Precedes a set of data blocks in a txn.   |
++-------+-----------------------------------------------+
+| 2     | Commit Block                                  |
+|       | -&gt; Marks the completion of a transaction.    |
++-------+-----------------------------------------------+
+| 3     | Superblock v1                                 |
+|       | -&gt; Journal metadata for version 1.           |
++-------+-----------------------------------------------+
+| 4     | Superblock v2                                 |
+|       | -&gt; Journal metadata for version 2.           |
++-------+-----------------------------------------------+
+| 5     | Revocation Block                              |
+|       | -&gt; Lists blocks overwritten, enables faster  |
+|       |    recovery.                                  |
++-------+-----------------------------------------------+</code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="console"><span class="gp">(gdb) p * (journal_header_t *)bh-&gt;</span>b_data
+<span class="gp">$</span>62 <span class="o">=</span> <span class="o">{</span>
+<span class="go">  h_magic = 2553887680,
+  h_blocktype = 33554432, &lt;&lt;&lt;&lt;&lt; 02
+  h_sequence = 3623878656  &lt;&lt;&lt;&lt; be32_to_cpu 216
+}</span></code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_superblock"><a class="anchor" href="#_superblock"></a>7.2. Superblock</h3>
+<div class="paragraph">
+<p>The journal superblock is simpler than the EXT4 superblock. It primarily keeps track of the journal size and the starting point of the transaction log.</p>
+</div>
+<div class="paragraph">
+<p>The journal superblock is recorded as <code>struct journal_superblock_s</code>, which is <strong>1024 bytes long</strong>.</p>
+</div>
+<div class="paragraph">
+<p>Each superblock begins with a common header (<code>journal_header_t</code>) followed by static and dynamic fields:</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 25%;">
+<col style="width: 25%;">
+<col style="width: 25%;">
+<col style="width: 25%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Offset</th>
+<th class="tableblock halign-left valign-top">Type</th>
+<th class="tableblock halign-left valign-top">Name</th>
+<th class="tableblock halign-left valign-top">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0x0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">journal_header_t (12 bytes)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">s_header</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Common header identifying this as a superblock.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0xC</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">__be32</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">s_blocksize</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Journal device block size.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0x10</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">__be32</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">s_maxlen</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Total number of blocks in this journal.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0x14</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">__be32</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">s_first</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">First block of log information.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0x18</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">__be32</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">s_sequence</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">First commit ID expected in log.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0x1C</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">__be32</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">s_start</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Block number of the start of log. Zero does <strong>not</strong> imply a clean journal.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0x20</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">__be32</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">s_errno</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Error value, set by jbd2_journal_abort().</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0x24</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">__be32</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">s_feature_compat</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Compatible feature set.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0x28</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">__be32</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">s_feature_incompat</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Incompatible feature set.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0x2C</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">__be32</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">s_feature_ro_compat</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Read-only compatible feature set.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0x30</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">__u8[16]</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">s_uuid</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">128-bit UUID for the journal, compared at mount time.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0x40</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">__be32</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">s_nr_users</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Number of file systems sharing this journal.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0x44</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">__be32</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">s_dynsuper</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Location of dynamic superblock copy (if any).</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0x48</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">__be32</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">s_max_transaction</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Limit of journal blocks per transaction (optional).</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0x4C</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">__be32</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">s_max_trans_data</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Limit of data blocks per transaction (optional).</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0x50</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">__u8</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">s_checksum_type</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Checksum algorithm used for the journal.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0x51</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">__u8[3]</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">s_padding2</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Padding bytes.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0x54</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">__be32</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">s_num_fc_blocks</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Number of fast commit blocks in the journal.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0x58</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">__be32</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">s_head</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Block number of the head (first unused block) of the journal.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0x5C</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">__u32[40]</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">s_padding</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Reserved/padding fields.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0xFC</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">__be32</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">s_checksum</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Checksum of the entire superblock (field set to zero before calculation).</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0x100</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">__u8[16*48]</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">s_users</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">IDs of all file systems sharing the journal.</p></td>
+</tr>
+</tbody>
+</table>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>This structure contains both static information (defining the journal) and dynamic
+information (current state of the journal). Fields marked optional may not
+always be used.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_descriptor_block"><a class="anchor" href="#_descriptor_block"></a>7.3. Descriptor Block</h3>
+<div class="paragraph">
+<p>The <strong>Descriptor Block</strong> lists the final locations of data blocks that follow in the journal.
+It is mostly open-coded but follows this structure:</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 33.3333%;">
+<col style="width: 33.3333%;">
+<col style="width: 33.3334%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Offset</th>
+<th class="tableblock halign-left valign-top">Type</th>
+<th class="tableblock halign-left valign-top">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0x0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">journal_header_t</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Common block header</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0xC</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">struct journal_block_tag_s array[]</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Tags describing the locations of data blocks; fills the rest of the block</p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>If <code>JBD2_FEATURE_INCOMPAT_CSUM_V3</code> is enabled, each journal block tag uses <code>struct journal_block_tag3_s</code>:</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 33.3333%;">
+<col style="width: 33.3333%;">
+<col style="width: 33.3334%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Offset</th>
+<th class="tableblock halign-left valign-top">Name</th>
+<th class="tableblock halign-left valign-top">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0x0</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">t_blocknr</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Lower 32-bits of the disk location for the corresponding data block</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0x4</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">t_flags</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Flags for the descriptor (see jbd2_tag_flags)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0x8</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">t_blocknr_high</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Upper 32-bits of the disk location (zero if 64-bit feature not enabled)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0xC</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">t_checksum</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Checksum of UUID, sequence number, and data block</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">0x8/0xC</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">uuid[16]</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">UUID associated with this tag; only used if “same UUID” flag is not set</p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p><strong>Notes:</strong></p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Descriptor blocks use at least 36 bytes but occupy a full journal block.</p>
+</li>
+<li>
+<p>Tags can be either 16 or 32 bytes depending on features and flags.</p>
+</li>
+</ul>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_data_block"><a class="anchor" href="#_data_block"></a>8. Data Block</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p><strong>Data Blocks</strong> contain the actual filesystem data written to disk through the journal.
+They are placed directly after their corresponding <strong>Descriptor Block</strong>.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_commit_block"><a class="anchor" href="#_commit_block"></a>9. Commit Block</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>The <strong>Commit Block</strong> marks the completion of a journal transaction.
+Once written, the transaction&#8217;s data can safely be applied to their final disk locations.</p>
+</div>
+<div class="paragraph">
+<p>It is defined by <code>struct commit_header</code> (32 bytes, occupies a full block):</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><strong>Header (<code>journal_header_s</code>)</strong> – Common block header.</p>
+</li>
+<li>
+<p><strong>Checksum type (<code>h_chksum_type</code>)</strong> – Type of checksum for verifying data integrity.</p>
+</li>
+<li>
+<p><strong>Checksum size (<code>h_chksum_size</code>)</strong> – Number of bytes used by the checksum.</p>
+</li>
+<li>
+<p><strong>Padding (<code>h_padding</code>)</strong> – Reserved bytes.</p>
+</li>
+<li>
+<p><strong>Checksums (<code>h_chksum</code>)</strong> – 32 bytes storing transaction checksums.</p>
+</li>
+<li>
+<p><strong>Commit time (<code>h_commit_sec</code> + <code>h_commit_nsec</code>)</strong> – Timestamp of transaction commit.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="console"><span class="gp">(gdb) p * (struct commit_header *) (bh-&gt;</span>b_data<span class="o">)</span>
+<span class="gp">$</span>66 <span class="o">=</span> <span class="o">{</span>
+<span class="go">  h_magic = 2553887680,
+  h_blocktype = 33554432,
+  h_sequence = 3623878656,
+  h_chksum_type = 0 '\000',
+  h_chksum_size = 0 '\000',
+  h_padding = "\000",
+  h_chksum = {1089293465, 0, 0, 0, 0, 0, 0, 0},
+  h_commit_sec = 1642148533370880000,
+  h_commit_nsec = 4125055546
+}
+</span><span class="gp">(gdb) ptype (struct commit_header *) (bh-&gt;</span>b_data<span class="o">)</span>
+<span class="go">type = struct commit_header {
+</span><span class="gp">    __be32 h_magic;</span><span class="w">
+</span><span class="gp">    __be32 h_blocktype;</span><span class="w">
+</span><span class="gp">    __be32 h_sequence;</span><span class="w">
+</span><span class="gp">    unsigned char h_chksum_type;</span><span class="w">
+</span><span class="gp">    unsigned char h_chksum_size;</span><span class="w">
+</span><span class="gp">    unsigned char h_padding[2];</span><span class="w">
+</span><span class="gp">    __be32 h_chksum[8];</span><span class="w">
+</span><span class="gp">    __be64 h_commit_sec;</span><span class="w">
+</span><span class="gp">    __be32 h_commit_nsec;</span><span class="w">
+</span><span class="go">} *</span></code></pre>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_references"><a class="anchor" href="#_references"></a>10. References</h2>
+<div class="sectionbody">
+<div class="openblock">
+<div class="content">
+<div class="ulist">
+<ul>
+<li>
+<p><a href="https://www.kernel.org/doc/html/latest/filesystems/ext4/journal.html" class="bare">https://www.kernel.org/doc/html/latest/filesystems/ext4/journal.html</a></p>
+</li>
+</ul>
+</div>
+</div>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>This experiment was performed on <strong>Linux kernel version 6.1.22</strong>.</p>
+</div>
+<div class="paragraph">
+<p>The issue has been resolved in later kernel releases.</p>
+</div>
+<div class="paragraph">
+<p>See the relevant patch here:
+<a href="https://patchwork.ozlabs.org/project/linux-ext4/patch/20240402090951.527619-1-yebin10@huawei.com/#3290959">Patch</a></p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+</div>
+</div>
+</div>
+<div id="footer">
+<div id="footer-text">
+Last updated 2026-03-29 10:19:14 -0400
+</div>
+</div>
+</body>
+</html>
