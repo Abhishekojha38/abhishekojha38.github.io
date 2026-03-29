@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="generator" content="Asciidoctor 2.0.26">
+<title>KGDB - Debug Kernel</title>
+<link rel="stylesheet" href="../assets/apple-theme.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+<link rel="stylesheet" href="../assets/rouge-base16.dark.css">
+</head>
+<nav class="apple-nav"><a href="../index.html"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>Home</a><span class="sep">›</span><span class="current">Debug-kernel-using-kgdb</span></nav>
+<body class="article toc2 toc-left">
+<div id="header">
+<h1>KGDB - Debug Kernel</h1>
+<div id="toc" class="toc2">
+<div id="toctitle">Table of Contents</div>
+<ul class="sectlevel1">
+<li><a href="#_about_kgdb">About KGDB</a></li>
+<li><a href="#_how_it_works">How it Works</a></li>
+<li><a href="#_block_diagram">Block Diagram</a></li>
+<li><a href="#_kernel_configuration">Kernel Configuration</a>
+<ul class="sectlevel2">
+<li><a href="#_by_modifying_boot_arguments">By Modifying Boot Arguments</a></li>
+</ul>
+</li>
+<li><a href="#_using_qemu_to_understand_kgdb">Using QEMU to understand KGDB</a></li>
+<li><a href="#_debug_an_already_loaded_kernel_module">Debug an already loaded kernel module</a></li>
+<li><a href="#_debug_remote_target_setup">Debug remote target setup</a>
+<ul class="sectlevel2">
+<li><a href="#_required_tools">Required Tools</a></li>
+</ul>
+</li>
+<li><a href="#_connect_the_gdb">Connect the gdb</a></li>
+<li><a href="#_example_i_mx8mq_nxp_processor">Example (i.MX8MQ: NXP Processor)</a></li>
+<li><a href="#_references">References</a></li>
+</ul>
+</div>
+</div>
+<div id="content">
+<div class="sect1">
+<h2 id="_about_kgdb"><a class="anchor" href="#_about_kgdb"></a>About KGDB</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Kgdb is intended to be used as a source level debugger for the Linux kernel. It
+is used along with gdb to debug a Linux kernel. The expectation is that gdb can
+be used to “break in” to the kernel to inspect memory, variables and look
+through call stack information similar to the way an application developer would
+use gdb to debug an application. It is possible to place breakpoints in kernel
+code.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_how_it_works"><a class="anchor" href="#_how_it_works"></a>How it Works</h2>
+<div class="sectionbody">
+<div class="ulist">
+<ul>
+<li>
+<p><code>Host &amp; Target</code>: A "host" machine runs the GDB client, while the "target" machine runs the Linux kernel you want to debug.</p>
+</li>
+<li>
+<p><code>Connection</code>: A serial cable (like RS-232) or network (UDP/IP) connects the two machines, enabling GDB to talk to the kernel.</p>
+</li>
+<li>
+<p><code>Kernel Integration</code>: KGDB is built into the kernel, acting as a GDB server that listens for commands from the host.</p>
+</li>
+<li>
+<p><code>Debugging Actions</code>: You can pause the kernel, examine registers, set breakpoints in kernel functions (like do_execve),
+and step instruction-by-instruction or line-by-line.</p>
+</li>
+</ul>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_block_diagram"><a class="anchor" href="#_block_diagram"></a>Block Diagram</h2>
+<div class="sectionbody">
+<div class="imageblock">
+<div class="content">
+<img src="../assets/images-kgdb/blockdiagram.png" alt="blockdiagram">
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_kernel_configuration"><a class="anchor" href="#_kernel_configuration"></a>Kernel Configuration</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p><strong>Enable the following kernel configuration</strong></p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><code>CONFIG_KGDB</code> to enable remote debugging.</p>
+</li>
+<li>
+<p><code>CONFIG_KGDB_SERIAL_CONSOLE</code> to allow gdb to access the serial console.</p>
+</li>
+<li>
+<p><code>CONFIG_KALLSYMS_ALL</code> add all symbols into the kernel image.</p>
+</li>
+<li>
+<p><code>CONFIG_MAGIC_SYSRQ</code> to be able to make sysrq.</p>
+</li>
+<li>
+<p><code>CONFIG_FRAME_POINTER</code> uses the frame pointer to save the stack information and backtrace.</p>
+</li>
+<li>
+<p><code>CONDIF_DEBUG_INFO</code> enable debug symbols</p>
+</li>
+<li>
+<p><code>CONFIG_GDB_SCRIPTS</code> enable gdb scripts</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p><strong>Disbale the following kernel configuration</strong></p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><code>CONFIG_DEBUG_INFO_REDUCED</code> to disable reducing debug information.</p>
+</li>
+<li>
+<p><code>CONFIG_RANDOMIZE_BASE</code> to disable Kernel Address Space Layout Randomization (KASLR).</p>
+</li>
+</ul>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>Kernel Address Space Layout Randomization (KASLR) randomizes the kernel’s memory
+layout at boot time.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<div class="sect2">
+<h3 id="_by_modifying_boot_arguments"><a class="anchor" href="#_by_modifying_boot_arguments"></a>By Modifying Boot Arguments</h3>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bootargs">setenv bootargs "${bootargs} nokaslr"
+saveenv</code></pre>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_using_qemu_to_understand_kgdb"><a class="anchor" href="#_using_qemu_to_understand_kgdb"></a>Using QEMU to understand KGDB</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>We will be using the <a href="https://github.com/Abhishekojha38/yocto-playground.git">yocto-playground</a>
+repository to create a <strong>QEMU</strong> setup and understand how <strong>KGDB</strong> works.</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>First, build the <strong>playground-image</strong> by following the steps provided in the
+<code>README.md</code> of the <a href="https://github.com/Abhishekojha38/yocto-playground.git">yocto-playground</a>
+repository.</p>
+</li>
+<li>
+<p>Enable the kernel configurations.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bitbake">bitbake -c menuconfig virtual/kernel</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>After making the changes build the entire image and check the <strong>vmlinux</strong>. Ensure the compiled vmlinux binary contains the debugging symbols by running the command given below:</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="logs">file vmlinux</code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="logs">vmlinux: ELF 64-bit LSB pie executable, ARM aarch64, version 1 (SYSV), statically linked, BuildID[sha1=258357cfb94ce97bb7a4563611a48b6131250919, with debug_info, not stripped</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Launch QEMU with the options below to enable GDB debugging:</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">runqemu playground-x86 nographic slirp <span class="nv">qemuparams</span><span class="o">=</span><span class="s2">"-s -S"</span> <span class="nv">bootparams</span><span class="o">=</span><span class="s2">"nokaslr"</span></code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Lets see what are these options.</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>nographic</p>
+<div class="ulist">
+<ul>
+<li>
+<p>Disables the QEMU graphical console (no window)</p>
+</li>
+<li>
+<p>Output goes directly to your terminal.</p>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p>slirp
+Uses user-mode networking (no root or tap setup required)
+Equivalent to:</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="options">-netdev user,id=net0 -device e1000,netdev=net0</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>qemuparams="-s -S"</p>
+<div class="ulist">
+<ul>
+<li>
+<p><code>-s</code> - Starts a GDB server inside QEMU on TCP port 1234. Listens for a GDB
+client on your host:</p>
+</li>
+</ul>
+</div>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="options">-gdb tcp::1234</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><code>-S</code> - Starts QEMU paused, waiting for GDB to attach. Allows you to set
+breakpoints before kernel execution.</p>
+<div class="ulist">
+<ul>
+<li>
+<p>bootparams="nokaslr"</p>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p>Disables Kernel Address Space Layout Randomization (KASLR).</p>
+</li>
+<li>
+<p>Ensures kernel symbols (e.g., start_kernel, do_initcalls) have fixed addresses</p>
+</li>
+<li>
+<p>Makes breakpoints and address lookups reliable</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="logs">runqemu - INFO - Running MACHINE=playground-x86 bitbake -e  ...
+runqemu - INFO - Continuing with the following parameters:
+KERNEL: [/home/yocto/yocto-playground/build/tmp/deploy/images/playground-x86/bzImage]
+MACHINE: [playground-x86]
+FSTYPE: [ext4]
+ROOTFS: [/home/yocto/yocto-playground/build/tmp/deploy/images/playground-x86/playground-image-playground-x86.rootfs-20251114010330.ext4]
+CONFFILE: [/home/yocto/yocto-playground/build/tmp/deploy/images/playground-x86/playground-image-playground-x86.rootfs-20251114010330.qemuboot.conf]
+
+runqemu - INFO - Network configuration: ip=dhcp
+runqemu - INFO - Port forward: hostfwd=tcp:127.0.0.1:2222-:22 hostfwd=tcp:127.0.0.1:2323-:23
+runqemu - INFO - Running /home/yocto/yocto-playground/build/tmp/work/x86_64-linux/qemu-helper-native/1.0/recipe-sysroot-native/usr/bin/qemu-system-x86_64 -device virtio-net-pci,netdev=net0,mac=52:54:00:12:35:02 -netdev user,id=net0,hostfwd=tcp:127.0.0.1:2222-:22,hostfwd=tcp:127.0.0.1:2323-:23,tftp=/home/yocto/yocto-playground/build/tmp/deploy/images/playground-x86 -object rng-random,filename=/dev/urandom,id=rng0 -device virtio-rng-pci,rng=rng0 -drive file=/home/yocto/yocto-playground/build/tmp/deploy/images/playground-x86/playground-image-playground-x86.rootfs-20251114010330.ext4,if=virtio,format=raw -usb -device usb-tablet -usb -device usb-kbd   -cpu IvyBridge -machine q35,i8042=off -smp 4 -m 256  -s -S -serial mon:stdio -serial null -nographic  -kernel /home/yocto/yocto-playground/build/tmp/deploy/images/playground-x86/bzImage -append 'root=/dev/vda rw  mem=256M ip=dhcp console=ttyS0 console=ttyS1 oprofile.timer=1 tsc=reliable no_timer_check rcupdate.rcu_expedited=1 swiotlb=0 nokaslr'
+
+runqemu - INFO - Host uptime: 1154880.06</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Check if KGDB is available on the target by running the command given below:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="logs">dmesg | grep kgdb
+ls /sys/module/kgdboc/</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Open another terminal and <strong>cd</strong> to linux build dir.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash"><span class="nb">cd</span> ~/yocto/yocto-playground/build/tmp/work/playground_x86-poky-linux/linux-playground/6.12.56/build</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Start <strong>gdb</strong></p>
+</li>
+</ul>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>Some distributions restrict GDB from auto-loading scripts unless they reside in
+approved safe directories. If GDB refuses to load vmlinux-gdb.py, add the
+following:</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash"><span class="nb">echo</span> <span class="s2">"add-auto-load-safe-path /home/yocto/yocto-playground/build/tmp/work-shared/playground-x86/kernel-source/scripts/gdb/vmlinux-gdb.py"</span> <span class="o">&gt;&gt;</span> ~/.gdbinit</code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="gdb">gdb ./vmlinux</code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="logs">GNU gdb (Ubuntu 12.1-0ubuntu1~22.04.2) 12.1
+Copyright (C) 2022 Free Software Foundation, Inc.
+License GPLv3+: GNU GPL version 3 or later &lt;http://gnu.org/licenses/gpl.html&gt;
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.
+Type "show copying" and "show warranty" for details.
+This GDB was configured as "x86_64-linux-gnu".
+Type "show configuration" for configuration details.
+For bug reporting instructions, please see:
+&lt;https://www.gnu.org/software/gdb/bugs/&gt;.
+Find the GDB manual and other documentation resources online at:
+    &lt;http://www.gnu.org/software/gdb/documentation/&gt;.
+
+For help, type "help".
+Type "apropos word" to search for commands related to "word"...
+Reading symbols from ./vmlinux...</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Load module (and main kernel) symbols:</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="gdb">(gdb) lx-symbols
+loading vmlinux</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Set the breakpoint</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="gdb">(gdb) b cmos_set_time
+Breakpoint 1 at 0xffffffff81dd0dd0: file /usr/src/kernel/drivers/rtc/rtc-cmos.c, line 244.</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Connect to <strong>QEMU</strong></p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="gdb">(gdb) target remote :1234
+Remote debugging using :1234
+0x000000000000fff0 in exception_stacks ()</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Dump the log buffer of the target kernel:</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="gdb">(gdb) lx-dmesg
+[    0.000000] Linux version 6.12.56 (oe-user@oe-host) (x86_64-poky-linux-gcc (GCC) 14.3.0, GNU ld (GNU Binutils) 2.44.0.20250715) #1 SMP PREEMPT_DYNAMIC Wed Oct 29 13:09:02 UTC 2025
+[    0.000000] Command line: root=/dev/vda rw  mem=256M ip=dhcp console=ttyS0 console=ttyS1 oprofile.timer=1 tsc=reliable no_timer_check rcupdate.rcu_expedited=1 swiotlb=0 nokaslr
+[    0.000000] KERNEL supported cpus:
+[    0.000000]   Intel GenuineIntel
+[    0.000000]   AMD AuthenticAMD
+[    0.000000]   Hygon HygonGenuine
+[    0.000000]   Centaur CentaurHauls
+[    0.000000]   zhaoxin   Shanghai
+[    0.000000] BIOS-provided physical RAM map:
+[    0.000000] BIOS-e820: [mem 0x0000000000000000-0x000000000009fbff] usable
+[    0.000000] BIOS-e820: [mem 0x000000000009fc00-0x000000000009ffff] reserved
+[    0.000000] BIOS-e820: [mem 0x00000000000f0000-0x00000000000fffff] reserved
+....</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>List of commands and functions:</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="gdb">(gdb) apropos lx
+function lx_clk_core_lookup -- Find struct clk_core by name
+function lx_current -- Return current task.
+function lx_dentry_name -- Return string of the full path of a dentry.
+function lx_device_find_by_bus_name -- Find struct device by bus and name (both strings)
+function lx_device_find_by_class_name -- Find struct device by class and name (both strings)
+function lx_i_dentry -- Return dentry pointer for inode.
+function lx_module -- Find module by name and return the module variable.
+function lx_per_cpu -- Return per-cpu variable.
+function lx_radix_tree_lookup --  Lookup and return a node from a RadixTree.
+function lx_rb_first -- Lookup and return a node from an RBTree
+function lx_rb_last -- Lookup and return a node from an RBTree.
+function lx_rb_next -- Lookup and return a node from an RBTree.
+function lx_rb_prev -- Lookup and return a node from an RBTree.
+function lx_task_by_pid -- Find Linux task by PID and return the task_struct variable.
+function lx_thread_info -- Calculate Linux thread_info from task variable.
+function lx_thread_info_by_pid -- Calculate Linux thread_info from task variable found by pid
+lx-clk-summary -- Print clk tree summary
+lx-cmdline --  Report the Linux Commandline used in the current kernel.
+lx-configdump -- Output kernel config to the filename specified as the command
+lx-cpus -- List CPU status arrays
+lx-device-list-bus -- Print devices on a bus (or all buses if not specified)
+lx-device-list-class -- Print devices in a class (or all classes if not specified)
+lx-device-list-tree -- Print a device and its children recursively
+lx-dmesg -- Print Linux kernel log buffer.
+lx-dump-page-owner -- Dump page owner
+lx-fdtdump -- Output Flattened Device Tree header and dump FDT blob to the filename
+lx-genpd-summary -- Print genpd summary
+lx-getmod-by-textaddr -- Look up loaded kernel module by text address.
+lx-interruptlist -- Print /proc/interrupts
+lx-iomem -- Identify the IO memory resource locations defined by the kernel
+lx-ioports -- Identify the IO port resource locations defined by the kernel
+lx-list-check -- Verify a list consistency
+lx-lsmod -- List currently loaded modules.
+lx-mounts -- Report the VFS mounts of the current process namespace.
+lx-page_address -- struct page to linear mapping address
+lx-page_to_pfn -- struct page to PFN
+lx-page_to_phys -- struct page to physical address
+lx-pfn_to_kaddr -- PFN to kernel address
+lx-pfn_to_page -- PFN to struct page
+lx-ps -- Dump Linux tasks.
+lx-slabinfo -- Show slabinfo
+lx-slabtrace -- Show specific cache slabtrace
+lx-stack_depot_lookup -- Search backtrace by handle
+lx-sym_to_pfn -- symbol address to PFN
+lx-symbols -- (Re-)load symbols of Linux kernel and currently loaded modules.
+lx-timerlist -- Print /proc/timer_list
+lx-version --  Report the Linux Version of the current kernel.
+lx-virt_to_page -- virtual address to struct page
+lx-virt_to_phys -- virtual address to physical address
+lx-vmallocinfo -- Show vmallocinfo
+(gdb)</code></pre>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_debug_an_already_loaded_kernel_module"><a class="anchor" href="#_debug_an_already_loaded_kernel_module"></a>Debug an already loaded kernel module</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>While the kernel body resides at well known virtual addresses (same as the load addresses from the vmlinux elf file), a loadable module (.ko) is just an archive, a collection of sections with no valid load address. The kernel loader allocates memory and decides where to load each loadable section of such a module. This means that, before module load (modprobe, insmod), we don&#8217;t know where in the virtual memory it will stay, but we can find out immediately after the module load. The file kernel/module.c is the loader. Looking into this file, observe that some features are guarded by CONFIG_KALLSYMS definition. In order to export section load information to userspace, the kernel must be compiled with this macro enabled.</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Start QEMU machine with following parameters:</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bootargs">runqemu playground-arm64 nographic qemuparams="-s -netdev tap,id=net1,ifname=tap1,script=no,downscript=no -device minimal-pcie-nic,netdev=net1" bootparams="nokaslr kgdboc=ttyAMA0,115200"</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Check module is loaded</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="logs">root@playground-arm64:~# lsmod
+Module                  Size  Used by
+minimal_pcie_nic_drv    12288  0
+ipv6                  458752  20
+root@playground-arm64:~#</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Get module sections</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="logs">root@playground-arm64:~# for I in /sys/module/minimal_pcie_nic_drv/sections/.*; do     echo -n "$I: ";     cat "$I"; done
+/sys/module/minimal_pcie_nic_drv/sections/.altinstructions: 0xffff80007a5a7000
+/sys/module/minimal_pcie_nic_drv/sections/.data: 0xffff80007a5a5000
+/sys/module/minimal_pcie_nic_drv/sections/.exit.data: 0xffff80007a5a5118
+/sys/module/minimal_pcie_nic_drv/sections/.exit.text: 0xffff80007a5a322c
+/sys/module/minimal_pcie_nic_drv/sections/.gnu.linkonce.this_module: 0xffff80007a5a5140
+/sys/module/minimal_pcie_nic_drv/sections/.init.data: 0xffff80007a5ab000
+/sys/module/minimal_pcie_nic_drv/sections/.init.plt: 0xffff80007a5a9040
+/sys/module/minimal_pcie_nic_drv/sections/.init.text: 0xffff80007a5a9000
+/sys/module/minimal_pcie_nic_drv/sections/.init.text.ftrace_trampoline: 0xffff80007a5a9058
+/sys/module/minimal_pcie_nic_drv/sections/.note.Linux: 0xffff80007a5a74cc
+/sys/module/minimal_pcie_nic_drv/sections/.note.gnu.build-id: 0xffff80007a5a74a8
+/sys/module/minimal_pcie_nic_drv/sections/.note.gnu.property: 0xffff80007a5a7488
+/sys/module/minimal_pcie_nic_drv/sections/.plt: 0xffff80007a5a3640
+/sys/module/minimal_pcie_nic_drv/sections/.rodata: 0xffff80007a5a71a8
+/sys/module/minimal_pcie_nic_drv/sections/.rodata.str1.8: 0xffff80007a5a7018
+/sys/module/minimal_pcie_nic_drv/sections/.strtab: 0xffff80007a5ab6f8
+/sys/module/minimal_pcie_nic_drv/sections/.symtab: 0xffff80007a5ab008
+/sys/module/minimal_pcie_nic_drv/sections/.text: 0xffff80007a5a3000
+/sys/module/minimal_pcie_nic_drv/sections/.text.ftrace_trampoline: 0xffff80007a5a37cc
+/sys/module/minimal_pcie_nic_drv/sections/.text.unlikely: 0xffff80007a5a3250
+root@playground-arm64:~#</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Set kgdboc</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="logs">root@playground-arm64:~# echo "ttyAMA0,115200" &gt; /sys/module/kgdboc/parameters/kgdboc
+[   96.144182] KGDB: Unregistered I/O driver kgdboc, debugger disabled
+[   96.144452] KGDB: Registered I/O driver kgdboc
+root@playground-arm64:~#</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Add symbol file</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="gdb">(gdb) add-symbol-file ../../../minimal-pcie-nic/1.0/image/usr/lib/modules/6.12.56/extra/minimal_pcie_nic_drv.ko 0xffff80007a5a9000\
+    -s .init.data 0xffff80007a5ab000 \
+    -s .rodata.str1.8 0xffff80007a5a7018</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Set breakpoint</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="gdb">(gdb) break minimal_pcie_nic_drv_tx
+Breakpoint 1 at 0xffff80007a5a9058
+(gdb)</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Now, we can continue debugging the module.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_debug_remote_target_setup"><a class="anchor" href="#_debug_remote_target_setup"></a>Debug remote target setup</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>To debug the remote target we need to use the console for kgdb connection as well as for the console output. To achieve this we use <code>agent-proxy</code>.</p>
+</div>
+<div class="sect2">
+<h3 id="_required_tools"><a class="anchor" href="#_required_tools"></a>Required Tools</h3>
+<div class="ulist">
+<ul>
+<li>
+<p><code>Agent-proxy</code> is used to split the serial port into two: one for console and another for gdb.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">git clone http://git.kernel.org/pub/scm/utils/kernel/kgdb/agent-proxy.git
+<span class="nb">cd </span>agent-proxy
+make</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Enable kernel configuration and build the image for target platform.</p>
+</li>
+<li>
+<p>Run Agent Proxy</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>./agent-proxy/agent-proxy '127.0.0.1:5550^127.0.0.1:5551' 0 /dev/ttyUSB0,115200</pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>To connect to the console of the device:</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">telnet localhost 5550</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>You have the console access.</p>
+</li>
+<li>
+<p>There are two ways to enable the kgdb.</p>
+<div class="ulist">
+<ul>
+<li>
+<p>Enable kgdb at run time</p>
+</li>
+</ul>
+</div>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash"><span class="c"># Enable kgdb at run time</span>
+<span class="nb">echo </span>ttymxc0 <span class="o">&gt;</span> /sys/module/kgdboc/parameters/kgdboc
+
+<span class="c">#or</span>
+
+<span class="c">#Enable kgdb at boot time. Add to bootargs</span>
+<span class="nv">kgdboc</span><span class="o">=</span>ttymxc0,115200 kgdbwait</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>With <code>kgdbwait</code>, kernel stops at boot:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="logs">KGDB: Waiting for connection from remote gdb...
+[2]kdb&gt;</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>At runtime, trigger with sysrq:</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash"><span class="nb">echo </span>g <span class="o">&gt;</span> /proc/sysrq-trigger</code></pre>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_connect_the_gdb"><a class="anchor" href="#_connect_the_gdb"></a>Connect the gdb</h2>
+<div class="sectionbody">
+<div class="ulist">
+<ul>
+<li>
+<p>Build the yocto SDK and Setup the enviroment as per the steps provided in the
+README.md of <a href="https://github.com/Abhishekojha38/yocto-playground.git">yocto-playground</a></p>
+</li>
+<li>
+<p>Once environment is setup. we can access gdb.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">aarch64-linux-gnu-gdb ./vmlinux</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Connect to target:</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="gdb">(gdb) target remote localhost:5551</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Without agent-proxy:</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="gdb">(gdb) set remotebaud 115200
+(gdb) target remote /dev/ttyS0</code></pre>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_example_i_mx8mq_nxp_processor"><a class="anchor" href="#_example_i_mx8mq_nxp_processor"></a>Example (i.MX8MQ: NXP Processor)</h2>
+<div class="sectionbody">
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="gdb">(gdb) target remote localhost:4441
+(gdb) b dcss-dtg.c:134
+(gdb) c
+(gdb) p dtg
+(gdb) p *dtg
+(gdb) x/1x 0xffff800082363000
+(gdb) info frame
+(gdb) ptype *dtg</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Example clock summary:</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="gdb">(gdb) lx-clk-summary</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Other useful commands:</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="gdb">lx-clk-summary Prints the kernel clock tree summary
+lx-symbols Loads kernel and module symbols
+lx-dmesg Dumps kernel log buffer
+lx-list Lists kernel linked list elements
+lx-device-list Lists registered devices</code></pre>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_references"><a class="anchor" href="#_references"></a>References</h2>
+<div class="sectionbody">
+<div class="ulist">
+<ul>
+<li>
+<p><a href="https://www.marcusfolkesson.se/blog/debug-kernel-with-kgdb/" class="bare">https://www.marcusfolkesson.se/blog/debug-kernel-with-kgdb/</a></p>
+</li>
+<li>
+<p><a href="https://sergioprado.blog/debugging-the-linux-kernel-with-gdb/" class="bare">https://sergioprado.blog/debugging-the-linux-kernel-with-gdb/</a></p>
+</li>
+<li>
+<p><a href="https://www.kernel.org/doc/html/v4.14/dev-tools/kgdb.html" class="bare">https://www.kernel.org/doc/html/v4.14/dev-tools/kgdb.html</a></p>
+</li>
+<li>
+<p><a href="https://www.kernel.org/doc/html/v5.7/dev-tools/gdb-kernel-debugging.html" class="bare">https://www.kernel.org/doc/html/v5.7/dev-tools/gdb-kernel-debugging.html</a></p>
+</li>
+</ul>
+</div>
+</div>
+</div>
+</div>
+<div id="footer">
+<div id="footer-text">
+Last updated 2026-03-28 23:04:11 -0400
+</div>
+</div>
+</body>
+</html>

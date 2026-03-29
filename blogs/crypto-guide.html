@@ -1,0 +1,1723 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="generator" content="Asciidoctor 2.0.26">
+<meta name="author" content="Abhishek Ojha">
+<title>Crypto Lab</title>
+<link rel="stylesheet" href="../assets/apple-theme.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+<link rel="stylesheet" href="../assets/rouge-base16.dark.css">
+</head>
+<nav class="apple-nav"><a href="../index.html"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>Home</a><span class="sep">›</span><span class="current">crypto_guide</span></nav>
+<body class="article toc2 toc-left">
+<div id="header">
+<h1>Crypto Lab</h1>
+<div class="details">
+<span id="author" class="author">Abhishek Ojha</span><br>
+<span id="email" class="email"><a href="mailto:Abhishekojha38@gmail.com.com">Abhishekojha38@gmail.com.com</a></span><br>
+</div>
+<div id="toc" class="toc2">
+<div id="toctitle">Table of Contents</div>
+<ul class="sectlevel1">
+<li><a href="#_introduction">1. Introduction</a></li>
+<li><a href="#_environment_setup">2. Environment Setup</a></li>
+<li><a href="#_key_generation">3. Key Generation</a></li>
+<li><a href="#_understanding_digital_signature">4. Understanding digital signature</a>
+<ul class="sectlevel2">
+<li><a href="#_signing_process">4.1. Signing Process</a>
+<ul class="sectlevel3">
+<li><a href="#_example">4.1.1. Example</a></li>
+</ul>
+</li>
+<li><a href="#_ways_to_store_a_digital_signature">4.2. Ways to store a digital signature:</a></li>
+</ul>
+</li>
+<li><a href="#_chain_of_trust">5. Chain of trust</a>
+<ul class="sectlevel2">
+<li><a href="#_example_2">5.1. Example</a></li>
+</ul>
+</li>
+<li><a href="#_understanding_x509_certificate">6. Understanding X509 Certificate</a>
+<ul class="sectlevel2">
+<li><a href="#_generate_self_signed_x509">6.1. Generate self-signed X509</a>
+<ul class="sectlevel3">
+<li><a href="#_option_1_using_x509_option">6.1.1. Option 1: Using -x509 option</a></li>
+<li><a href="#generate-csr">6.1.2. Option 2: Generate csr and then sign it with same private key.</a></li>
+</ul>
+</li>
+<li><a href="#_generate_x509_root_ca">6.2. Generate X509 Root CA</a>
+<ul class="sectlevel3">
+<li><a href="#_create_a_root_ca_certificate">6.2.1. Create a Root CA Certificate</a></li>
+</ul>
+</li>
+<li><a href="#_create_a_device_certificate_signed_by_root_ca">6.3. Create a Device Certificate Signed by Root CA</a></li>
+</ul>
+</li>
+<li><a href="#_encoding_formats">7. Encoding Formats</a>
+<ul class="sectlevel2">
+<li><a href="#_pem">7.1. PEM</a></li>
+<li><a href="#_der">7.2. DER</a></li>
+<li><a href="#_pkcs5">7.3. PKCS#5</a></li>
+<li><a href="#_pkcs8">7.4. PKCS#8</a></li>
+<li><a href="#_pkcs10">7.5. PKCS#10</a></li>
+<li><a href="#_pkcs11">7.6. PKCS#11</a>
+<ul class="sectlevel3">
+<li><a href="#_pkcs11_with_op_tee">7.6.1. PKCS#11 with OP-TEE</a></li>
+</ul>
+</li>
+<li><a href="#_pkcs12">7.7. PKCS#12</a></li>
+<li><a href="#_pkcs7">7.8. PKCS#7</a>
+<ul class="sectlevel3">
+<li><a href="#_sign_message_pkcs7">7.8.1. Sign message PKCS#7</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><a href="#_refrences">8. Refrences</a></li>
+</ul>
+</div>
+</div>
+<div id="content">
+<div class="sect1">
+<h2 id="_introduction"><a class="anchor" href="#_introduction"></a>1. Introduction</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>This guide will help you understand the basics of cryptography and how to use it in your projects.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_environment_setup"><a class="anchor" href="#_environment_setup"></a>2. Environment Setup</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>List prerequisites:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>OpenSSL ≥ 3.0</p>
+</li>
+<li>
+<p>asciidoctor for rendering</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>Example setup:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash"><span class="nb">sudo </span>apt <span class="nb">install </span>openssl asciidoctor</code></pre>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_key_generation"><a class="anchor" href="#_key_generation"></a>3. Key Generation</h2>
+<div class="sectionbody">
+<div class="ulist">
+<ul>
+<li>
+<p>Generate Private key:</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">openssl genpkey <span class="nt">-algorithm</span> RSA <span class="nt">-out</span> private_key.pem <span class="nt">-pkeyopt</span> rsa_keygen_bits:2048
+<span class="nb">cat </span>private_key.pem</code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text">-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCkUrjpLeCnuXXE
+........
+........
+mMzOBHNsW8pIxInMBcUp3NM=
+-----END PRIVATE KEY-----</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Extract Public Key:</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">openssl rsa <span class="nt">-pubout</span> <span class="nt">-in</span> private_key.pem <span class="nt">-out</span> public_key.pem
+<span class="nb">cat </span>public_key.pem</code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text">-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApFK46S3gp7l1xJ7dzWnu
+........
+MF4fIkaSMeeXXxoDwamJvZrXqWR37QlzV+WRlCoHY5tWGTEhsKXmrvD7Yh0WNkP+
+rQIDAQAB
+-----END PUBLIC KEY-----</code></pre>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_understanding_digital_signature"><a class="anchor" href="#_understanding_digital_signature"></a>4. Understanding digital signature</h2>
+<div class="sectionbody">
+<div class="ulist">
+<ul>
+<li>
+<p>Steps for Computing a Digital Signature:</p>
+<div class="ulist">
+<ul>
+<li>
+<p><code>Generate a Key Pair</code>: Create a public and private key pair using a key generation
+algorithm, such as RSA.</p>
+</li>
+<li>
+<p><code>Prepare the Data</code>: Identify the data for which the signature will be computed.</p>
+</li>
+<li>
+<p><code>Compute the Hash</code>: Generate a hash of the data using a hashing algorithm, for
+example, SHA-256.</p>
+</li>
+<li>
+<p><code>Encrypt the Hash</code>: Encrypt the computed hash with the private key. The result
+of this encryption is the digital signature.</p>
+</li>
+</ul>
+</div>
+</li>
+</ul>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-certs/digital_signature_generation.png" alt="Digital Signature Flow" width="500">
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Steps for Verifying a Digital Signature</p>
+<div class="ulist">
+<ul>
+<li>
+<p><code>Gather Required Information</code>: To verify a signature,  data that was signed,
+the digital signature, the hash algorithm used, and the signer’s public key.</p>
+</li>
+<li>
+<p><code>Compute the Data Hash</code>: Generate the hash of the received data using the same
+hashing algorithm that was used to create the signature (e.g., SHA-256).</p>
+</li>
+<li>
+<p><code>Decrypt the Signature</code>: Use the public key to decrypt the digital signature.
+This will yield the hash value that was originally computed during signing.</p>
+</li>
+<li>
+<p><code>Compare Hashes</code>: Compare the hash obtained from the data with the hash obtained
+from decrypting the signature.</p>
+</li>
+<li>
+<p>If the hashes match, the signature is valid and the data has not been tampered
+with.</p>
+</li>
+<li>
+<p>If the hashes do not match, the data may have been altered, and the signature is
+invalid.</p>
+</li>
+</ul>
+</div>
+</li>
+</ul>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-certs/digital_signature_verification.png" alt="Digital Signature Flow" width="600">
+</div>
+</div>
+<div class="paragraph">
+<p>A digital signature is a cryptographic method that ensures:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><code>Authenticity</code>: Confirms the source of data.</p>
+</li>
+<li>
+<p><code>Integrity</code>: Ensures the data hasn’t been modified.</p>
+</li>
+<li>
+<p><code>Non-repudiation</code>: Prevents the signer from denying authorship.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p><code>A Private Key</code> → used to sign data.
+<code>A Public Key</code> → used to verify the signature.</p>
+</div>
+<div class="sect2">
+<h3 id="_signing_process"><a class="anchor" href="#_signing_process"></a>4.1. Signing Process</h3>
+<div class="paragraph">
+<p>The sender takes the original data.</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>A hash function (e.g., SHA-256) is applied to produce a fixed-length digest.</p>
+</li>
+<li>
+<p>This hash is then encrypted with the sender’s private key → producing the digital signature.</p>
+</li>
+<li>
+<p>The signature is sent along with the data.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">Data ──&gt; Hash ──&gt; Encrypt with Private Key ──&gt; Digital Signature</code></pre>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_example"><a class="anchor" href="#_example"></a>4.1.1. Example</h4>
+<div class="ulist">
+<ul>
+<li>
+<p>Sample data.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash"><span class="nb">echo</span> <span class="s2">"Confidential data to sign"</span> <span class="o">&gt;</span> data.txt</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Sign the data and generate digital signature.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">openssl dgst <span class="nt">-sha256</span> <span class="nt">-sign</span> private_key.pem <span class="nt">-out</span> signature.bin data.txt</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Verify signature.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">openssl dgst <span class="nt">-sha256</span> <span class="nt">-verify</span> public_key.pem <span class="nt">-signature</span> signature.bin data.txt</code></pre>
+</div>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_ways_to_store_a_digital_signature"><a class="anchor" href="#_ways_to_store_a_digital_signature"></a>4.2. Ways to store a digital signature:</h3>
+<div class="ulist">
+<ul>
+<li>
+<p>Raw Binary Format:</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">openssl dgst <span class="nt">-sha256</span> <span class="nt">-sign</span> private_key.pem <span class="nt">-out</span> signature.bin data.txt</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>PEM Format:</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">openssl dgst <span class="nt">-sha256</span> <span class="nt">-sign</span> private_key.pem <span class="nt">-out</span> signature.bin data.txt
+openssl <span class="nb">base64</span> <span class="nt">-in</span> signature.bin <span class="nt">-out</span> signature.pem</code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text">-----BEGIN SIGNATURE-----
+MEYCIQC1...
+-----END SIGNATURE-----</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>PKCS#7 / CMS (Cryptographic Message Syntax)</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text">SignedData {
+  version,
+  digestAlgorithms,
+  encapContentInfo,
+  certificates,        &lt;-- X.509 cert(s)
+  crls OPTIONAL,
+  signerInfos          &lt;-- Signature + metadata
+}</code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">openssl smime <span class="nt">-sign</span> <span class="nt">-in</span> data.txt <span class="nt">-signer</span> cert.pem <span class="nt">-inkey</span> key.pem <span class="nt">-outform</span> DER <span class="se">\</span>
+<span class="nt">-out</span> signature.p7s</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>PKCS#10 / X.509 Containers</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">openssl req <span class="nt">-newkey</span> rsa:2048 <span class="nt">-keyout</span> private_key.pem <span class="nt">-x509</span> <span class="nt">-days</span> 365 <span class="nt">-out</span> cert.pem</code></pre>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_chain_of_trust"><a class="anchor" href="#_chain_of_trust"></a>5. Chain of trust</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Each certificate’s signature can be verified using the public key of the issuer
+above it.</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>The server certificate is verified by the intermediate’s public key.</p>
+</li>
+<li>
+<p>The intermediate certificate is verified by the root CA’s public key.</p>
+</li>
+<li>
+<p>The root CA is trusted because your OS or browser already trusts it.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text">Root CA → Intermediate CA(s) → End-Entity (Server) Certificate</code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text">+------------------------+
+| Root CA Certificate    |
+| (self-signed, trusted) |
++-----------▲------------+
+            |
+            | signs
+            ▼
++-----------------------------+
+| Intermediate CA Certificate |
+| (signed by Root CA)         |
++-----------▲-----------------+
+            |
+            | signs
+            ▼
++--------------------------------+
+| End-Entity / Server Certificate|
+| (www.example.com)              |
++--------------------------------+</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>When the server sends its cert chain to the client, it includes the bottom two:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text">[Server Cert] + [Intermediate Cert(s)]</code></pre>
+</div>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>The intermediate certificate (Intermediate CA) exists for security, flexibility,
+and scalability</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><code>Root CAs</code> Are Extremely Sensitive. So we don&#8217;t want to expose the private key
+and that the reason <code>Intermediate cert</code> came in picture.</p>
+</li>
+<li>
+<p><code>Intermediate Certificates</code> Act as a “Buffer”.Root CA delegates the signing
+authority to one or more Intermediate CAs.These intermediates then sign
+end-entity (server) certificates.</p>
+<div class="ulist">
+<ul>
+<li>
+<p>Limits exposure of root private key</p>
+</li>
+<li>
+<p>Easier key rotation</p>
+</li>
+</ul>
+</div>
+</li>
+</ul>
+</div>
+<div class="sect2">
+<h3 id="_example_2"><a class="anchor" href="#_example_2"></a>5.1. Example</h3>
+<div class="ulist">
+<ul>
+<li>
+<p>Create following certs to undertand the chain of trust.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text">certs/
+  root/
+    root.key.pem
+    root.crt.pem
+  intermediate/
+    intermediate.key.pem
+    intermediate.crt.pem
+  server/
+    server.key.pem
+    server.csr.pem
+    server.crt.pem</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Generate Root CA - self signed</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash"><span class="c"># 2.1 Generate root private key</span>
+openssl genrsa <span class="nt">-out</span> certs/root/root.key.pem 4096
+
+<span class="c"># 2.2 Generate self-signed root certificate (valid 10 years)</span>
+openssl req <span class="nt">-x509</span> <span class="nt">-new</span> <span class="nt">-nodes</span> <span class="nt">-key</span> certs/root/root.key.pem <span class="se">\</span>
+  <span class="nt">-sha256</span> <span class="nt">-days</span> 3650 <span class="se">\</span>
+  <span class="nt">-out</span> certs/root/root.crt.pem <span class="se">\</span>
+  <span class="nt">-subj</span> <span class="s2">"/C=US/ST=CA/L=SanFrancisco/O=ExampleRootCA/OU=RootCA/CN=ExampleRootCA"</span></code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Generate the Intermediate CA</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash"><span class="c"># 3.1 Generate intermediate private key</span>
+openssl genrsa <span class="nt">-out</span> certs/intermediate/intermediate.key.pem 4096
+
+<span class="c"># 3.2 Generate CSR (Certificate Signing Request) for intermediate</span>
+openssl req <span class="nt">-new</span> <span class="nt">-key</span> certs/intermediate/intermediate.key.pem <span class="se">\</span>
+  <span class="nt">-out</span> certs/intermediate/intermediate.csr.pem <span class="se">\</span>
+  <span class="nt">-subj</span> <span class="s2">"/C=US/ST=CA/L=SanFrancisco/O=ExampleIntermediateCA/OU=Intermediate/CN=ExampleIntermediateCA"</span>
+
+<span class="c"># 3.3 Sign the intermediate CSR with Root CA</span>
+openssl x509 <span class="nt">-req</span> <span class="nt">-in</span> certs/intermediate/intermediate.csr.pem <span class="se">\</span>
+  <span class="nt">-CA</span> certs/root/root.crt.pem <span class="nt">-CAkey</span> certs/root/root.key.pem <span class="nt">-CAcreateserial</span> <span class="se">\</span>
+  <span class="nt">-out</span> certs/intermediate/intermediate.crt.pem <span class="nt">-days</span> 1825 <span class="nt">-sha256</span></code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Now you have an Intermediate CA signed by the Root CA.</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Generate the Server (End-Entity) Certificate</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash"><span class="c"># 4.1 Generate server private key</span>
+openssl genrsa <span class="nt">-out</span> certs/server/server.key.pem 2048
+
+<span class="c"># 4.2 Generate server CSR</span>
+openssl req <span class="nt">-new</span> <span class="nt">-key</span> certs/server/server.key.pem <span class="se">\</span>
+  <span class="nt">-out</span> certs/server/server.csr.pem <span class="se">\</span>
+  <span class="nt">-subj</span> <span class="s2">"/C=US/ST=CA/L=SanFrancisco/O=ExampleServer/OU=Web/CN=www.example.com"</span>
+
+<span class="c"># 4.3 Sign server CSR with Intermediate CA</span>
+openssl x509 <span class="nt">-req</span> <span class="nt">-in</span> certs/server/server.csr.pem <span class="se">\</span>
+  <span class="nt">-CA</span> certs/intermediate/intermediate.crt.pem <span class="nt">-CAkey</span> certs/intermediate/intermediate.key.pem <span class="nt">-CAcreateserial</span> <span class="se">\</span>
+  <span class="nt">-out</span> certs/server/server.crt.pem <span class="nt">-days</span> 825 <span class="nt">-sha256</span></code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Verify the Chain</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash"><span class="c"># Verify the server cert against the chain</span>
+openssl verify <span class="nt">-CAfile</span> &lt;<span class="o">(</span><span class="nb">cat </span>certs/root/root.crt.pem certs/intermediate/intermediate.crt.pem<span class="o">)</span> <span class="se">\</span>
+  certs/server/server.crt.pem</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Optional: Create PKCS#7 Bundle</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">openssl crl2pkcs7 <span class="nt">-nocrl</span> <span class="nt">-certfile</span> certs/server/server.crt.pem <span class="se">\</span>
+  <span class="nt">-certfile</span> certs/intermediate/intermediate.crt.pem <span class="nt">-out</span> certs/server/server.p7b <span class="se">\</span>
+  <span class="nt">-certfile</span> certs/root/root.crt.pem</code></pre>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_understanding_x509_certificate"><a class="anchor" href="#_understanding_x509_certificate"></a>6. Understanding X509 Certificate</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>An X.509 certificate is a digital document that binds a public key to an
+identity (like a user, computer, or server) and is used to verify authenticity
+and enable secure communication. These certificates are a standard part of
+Public Key Infrastructure (PKI), are issued by trusted Certificate Authorities
+(CAs).</p>
+</div>
+<div class="paragraph">
+<p>There are two common types:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><code>Root CA Certificate</code> — A trusted Certificate Authority used to sign other
+certificates.</p>
+</li>
+<li>
+<p><code>Self-Signed Certificate</code> — A standalone certificate signed by its own private
+key (used when no CA is involved).</p>
+</li>
+</ul>
+</div>
+<div class="sect2">
+<h3 id="_generate_self_signed_x509"><a class="anchor" href="#_generate_self_signed_x509"></a>6.1. Generate self-signed X509</h3>
+<div class="ulist">
+<ul>
+<li>
+<p>Generate Private key</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">openssl genpkey <span class="nt">-algorithm</span> RSA <span class="nt">-out</span> private_key.pem <span class="nt">-pkeyopt</span> rsa_keygen_bits:2048</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Now there are two steps to genearte self-signed X509.</p>
+<div class="ulist">
+<ul>
+<li>
+<p>Using -x509 option of openssl: You get a self-signed certificate in one step.</p>
+</li>
+<li>
+<p>Generate csr and then sign it with same private key which was used for csr.
+-x509 option also does same thing in the background.</p>
+</li>
+</ul>
+</div>
+</li>
+</ul>
+</div>
+<div class="sect3">
+<h4 id="_option_1_using_x509_option"><a class="anchor" href="#_option_1_using_x509_option"></a>6.1.1. Option 1: Using -x509 option</h4>
+<div class="paragraph">
+<p>Generate self-signed x509 certificate.</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Creates a new certificate request internally.</p>
+</li>
+<li>
+<p>Immediately self-signs it using the same private key.</p>
+</li>
+<li>
+<p>Outputs the certificate (X.509 format), not the CSR.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash"><span class="nv">$ </span>openssl req <span class="nt">-x509</span> <span class="nt">-new</span> <span class="nt">-nodes</span> <span class="nt">-key</span> private_key.pem <span class="nt">-sha256</span> <span class="nt">-days</span> 3650 <span class="nt">-out</span> device.crt</code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text">You are about to be asked to enter information that will be incorporated
+into your certificate request.
+What you are about to enter is what is called a Distinguished Name or a DN.
+There are quite a few fields but you can leave some blank
+For some fields there will be a default value,
+If you enter '.', the field will be left blank.
+Country Name (2 letter code) [AU]:CA
+State or Province Name (full name) [Some-State]:Quebec
+Locality Name (eg, city) []:
+Organization Name (eg, company) [Internet Widgits Pty Ltd]:Company Solutions
+Organizational Unit Name (eg, section) []:
+Common Name (e.g. server FQDN or YOUR name) []:device.company.solutions
+Email Address []:</code></pre>
+</div>
+</div>
+</div>
+<div class="sect3">
+<h4 id="generate-csr"><a class="anchor" href="#generate-csr"></a>6.1.2. Option 2: Generate csr and then sign it with same private key.</h4>
+<div class="ulist">
+<ul>
+<li>
+<p>You explicitly create a Certificate Signing Request (CSR).</p>
+</li>
+<li>
+<p>Then you use openssl x509 to sign that CSR using the same private key.</p>
+</li>
+<li>
+<p>The result is a self-signed certificate, just like in <code>Option 1</code> — but via two
+steps.</p>
+</li>
+<li>
+<p>Generate CSR, Hash of (Public Key + Identity Info) = Sign the Hash with
+Private key which result in Digital signature. Append digital signature at the
+end of CSR.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash"><span class="nv">$ </span>openssl req <span class="nt">-new</span> <span class="nt">-key</span> private_key.pem <span class="nt">-out</span> request.csr</code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text">You are about to be asked to enter information that will be incorporated
+into your certificate request.
+What you are about to enter is what is called a Distinguished Name or a DN.
+There are quite a few fields but you can leave some blank
+For some fields there will be a default value,
+If you enter '.', the field will be left blank.
+Country Name (2 letter code) [AU]:CA
+State or Province Name (full name) [Some-State]:Quebec
+Locality Name (eg, city) []:
+Organization Name (eg, company) [Internet Widgits Pty Ltd]:Company Solutions
+Organizational Unit Name (eg, section) []:
+Common Name (e.g. server FQDN or YOUR name) []:device.company.solutions
+Email Address []:
+
+Please enter the following 'extra' attributes
+to be sent with your certificate request
+A challenge password []:
+An optional company name []:</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Generate X509 cert.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">openssl x509 <span class="nt">-req</span> <span class="nt">-in</span> request.csr <span class="nt">-signkey</span> private_key.pem <span class="nt">-out</span> cert.pem <span class="nt">-days</span> 365</code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>Certificate request self-signature ok
+subject=C=CA, ST=Quebec, O=Company Solutions, CN=device.company.solutions</pre>
+</div>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_generate_x509_root_ca"><a class="anchor" href="#_generate_x509_root_ca"></a>6.2. Generate X509 Root CA</h3>
+<div class="sect3">
+<h4 id="_create_a_root_ca_certificate"><a class="anchor" href="#_create_a_root_ca_certificate"></a>6.2.1. Create a Root CA Certificate</h4>
+<div class="paragraph">
+<p>A Root CA is the top of the trust chain — it signs other certificates to make
+them trusted.</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Generate Root CA Private Key.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">openssl genpkey <span class="nt">-algorithm</span> RSA <span class="nt">-out</span> root-pri.key <span class="nt">-pkeyopt</span> rsa_keygen_bits:4096</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Create Root CA Certificate.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash"><span class="nv">$ </span>openssl req <span class="nt">-x509</span> <span class="nt">-new</span> <span class="nt">-nodes</span> <span class="nt">-key</span> root-pri.key <span class="nt">-sha256</span> <span class="nt">-days</span> 3650 <span class="nt">-out</span> rootCA.crt</code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text">You are about to be asked to enter information that will be incorporated
+into your certificate request.
+What you are about to enter is what is called a Distinguished Name or a DN.
+There are quite a few fields but you can leave some blank
+For some fields there will be a default value,
+If you enter '.', the field will be left blank.
+Country Name (2 letter code) [AU]:CA
+State or Province Name (full name) [Some-State]:Quebec
+Locality Name (eg, city) []:
+Organization Name (eg, company) [Internet Widgits Pty Ltd]:ROOTCA
+Organizational Unit Name (eg, section) []:
+Common Name (e.g. server FQDN or YOUR name) []:
+Email Address []:</code></pre>
+</div>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="ulist">
+<ul>
+<li>
+<p>-x509: Create a self-signed certificate (no CSR required).</p>
+</li>
+<li>
+<p>-days 3650: Valid for 10 years.</p>
+</li>
+<li>
+<p>-sha256: Use SHA-256 for signing.</p>
+</li>
+</ul>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Verify Root CA Certificate. We can clearly see Data, Signature algo, Signature
+(Data ──&gt; Hash ──&gt; Encrypt with Private Key ──&gt; Digital Signature). Here
+Encrypt with Private Key(Hash(data(Identitiy + PublicKey))) is
+sha256WithRSAEncryption(data(Identitiy + PublicKey))</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">openssl x509 <span class="nt">-in</span> rootCA.crt <span class="nt">-text</span> <span class="nt">-noout</span></code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text">Certificate:
+    Data:
+        Version: 3 (0x2)
+        Serial Number:
+            04:43:12:87:22:c4:dd:82:2e:0b:9c:ee:fa:c5:0a:a5:73:eb:19:e5
+        Signature Algorithm: sha256WithRSAEncryption
+        Issuer: C = AU, ST = Some-State, O = Internet Widgits Pty Ltd
+        Validity
+            Not Before: Oct 17 14:00:58 2025 GMT
+            Not After : Oct 15 14:00:58 2035 GMT
+        Subject: C = AU, ST = Some-State, O = Internet Widgits Pty Ltd
+        Subject Public Key Info:
+            Public Key Algorithm: rsaEncryption
+                Public-Key: (4096 bit)
+                Modulus:
+                    00:b8:f3:eb:32:6d:95:5c:42:db:04:e5:12:c4:0d:
+                    da:4c:8a:ee:44:45:9a:8c:73:b4:91:a6:80:9e:f4:
+                    .........
+                    16:d1:bb:e3:8a:d0:3c:12:62:a9:e4:85:ad:e2:62:
+                    b0:82:63
+                Exponent: 65537 (0x10001)
+        X509v3 extensions:
+            X509v3 Subject Key Identifier:
+                E2:D7:F6:CF:B9:96:2C:A9:DF:75:04:20:4D:CD:B3:F9:AC:20:44:38
+            X509v3 Authority Key Identifier:
+                E2:D7:F6:CF:B9:96:2C:A9:DF:75:04:20:4D:CD:B3:F9:AC:20:44:38
+            X509v3 Basic Constraints: critical
+                CA:TRUE
+    Signature Algorithm: sha256WithRSAEncryption
+    Signature Value:
+        53:f5:56:db:7d:ca:1d:96:62:15:ed:68:2d:38:9e:74:4b:7c:
+        .............
+        7a:81:48:62:26:b5:74:49:b5:aa:17:e6:e1:a1:ff:c6:e2:df:
+        3a:11:96:45:38:b5:8b:f9</code></pre>
+</div>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_create_a_device_certificate_signed_by_root_ca"><a class="anchor" href="#_create_a_device_certificate_signed_by_root_ca"></a>6.3. Create a Device Certificate Signed by Root CA</h3>
+<div class="paragraph">
+<p>Now we’ll create another certificate (for a device, web server, or user) that’s
+signed by the Root CA.</p>
+</div>
+<div class="imageblock text-center">
+<div class="content">
+<img src="../assets/images-certs/swupdate_cms_1.png" alt="Digital Certificate Flow" width="800">
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Generate Device Private Key.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">openssl genpkey <span class="nt">-algorithm</span> RSA <span class="nt">-out</span> device.key <span class="nt">-pkeyopt</span> rsa_keygen_bits:2048</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Generate CSR (Certificate Signing Request)
+Hash of (Public Key + Identity Info) = Sign the Hash with Private key which
+result in Digital signature. Append digital signature at the end of CSR.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash"><span class="nv">$ </span>openssl req <span class="nt">-new</span> <span class="nt">-key</span> device.key <span class="nt">-out</span> device.csr</code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text">You are about to be asked to enter information that will be incorporated
+into your certificate request.
+What you are about to enter is what is called a Distinguished Name or a DN.
+There are quite a few fields but you can leave some blank
+For some fields there will be a default value,
+If you enter '.', the field will be left blank.
+Country Name (2 letter code) [AU]:
+State or Province Name (full name) [Some-State]:
+Locality Name (eg, city) []:
+Organization Name (eg, company) [Internet Widgits Pty Ltd]:
+Organizational Unit Name (eg, section) []:
+Common Name (e.g. server FQDN or YOUR name) []:
+Email Address []:
+
+Please enter the following 'extra' attributes
+to be sent with your certificate request
+A challenge password []:
+An optional company name []:</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Enter details:</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text">Country Name (2 letter code) [AU]:CA
+State or Province Name (full name) [Some-State]:Quebec
+Organization Name [Internet Widgits Pty Ltd]:Company Solutions
+Common Name [localhost]:device.company.local</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Dump csr for understanding.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">openssl req <span class="nt">-in</span> device.csr <span class="nt">-text</span> <span class="nt">-noout</span></code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text">Certificate Request:
+    Data:
+        Version: 1 (0x0)
+        Subject: C = AU, ST = Some-State, O = Internet Widgits Pty Ltd
+        Subject Public Key Info:
+            Public Key Algorithm: rsaEncryption
+                Public-Key: (2048 bit)
+                Modulus:
+                    00:c0:9e:7d:ed:6e:4d:22:da:b2:5a:a6:cd:06:9a:
+                    78:4c:f9:4e:56:2e:d0:8c:68:42:aa:cd:31:cf:4b:
+                    .............
+                    9f:77:e1:29:10:c0:8a:50:c1:f7:86:6e:37:ed:71:
+                    ab:3f
+                Exponent: 65537 (0x10001)
+        Attributes:
+            (none)
+            Requested Extensions:
+    Signature Algorithm: sha256WithRSAEncryption
+    Signature Value:
+        7e:f0:a0:94:c1:38:98:82:59:d1:26:3f:a3:4c:90:a3:86:ba:
+        .........
+        0c:34:31:0c:78:75:17:9d:ab:24:00:f2:8d:92:32:bb:29:dc:
+        46:95:0b:ec</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Create Configuration File for Extensions (Optional but Recommended).</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text">authorityKeyIdentifier=keyid,issuer
+basicConstraints=CA:FALSE
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth, clientAuth
+subjectAltName = @alt_names
+
+[alt_names]
+DNS.1 = device.company.local</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Sign the Device CSR with Root CA.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">openssl x509 <span class="nt">-req</span> <span class="nt">-in</span> device.csr <span class="nt">-CA</span> rootCA.crt <span class="nt">-CAkey</span> root-pri.key <span class="nt">-CAcreateserial</span> <span class="se">\</span>
+<span class="nt">-out</span> device.crt <span class="nt">-days</span> 730 <span class="nt">-sha256</span> <span class="nt">-extfile</span> device_ext.cnf</code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text">Certificate request self-signature ok
+subject=C = CA, ST = Quebec, O = Company Solutions, CN = device.company.local</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Verify the Signed Certificate.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">openssl x509 <span class="nt">-in</span> device.crt <span class="nt">-text</span> <span class="nt">-noout</span></code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Verify the Certificate Chain.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash"><span class="nv">$ </span>openssl verify <span class="nt">-CAfile</span> rootCA.crt device.crt</code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text">device.crt: OK</code></pre>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_encoding_formats"><a class="anchor" href="#_encoding_formats"></a>7. Encoding Formats</h2>
+<div class="sectionbody">
+<div class="sect2">
+<h3 id="_pem"><a class="anchor" href="#_pem"></a>7.1. PEM</h3>
+<div class="ulist">
+<ul>
+<li>
+<p>ASCII Base64 encoding format.</p>
+</li>
+<li>
+<p>PEM certificates can have a file extension of .pem, .crt, or .cer.</p>
+</li>
+<li>
+<p>The PEM format is the most common format that Certificate Authorities issue
+certificates in.</p>
+</li>
+<li>
+<p>PEM certificates usually have extentions such as .pem, .crt, .cer, and .key.</p>
+</li>
+<li>
+<p>They are Base64 encoded ASCII files and contain "-----BEGIN CERTIFICATE-----"
+and "-----END CERTIFICATE-----" statements.</p>
+</li>
+<li>
+<p>Server certificates, intermediate certificates, and private keys can all be
+put into the PEM format.</p>
+</li>
+<li>
+<p>The PKCS12 format is preferred for exchanging certificates that has private
+key(s).</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text">-----BEGIN CERTIFICATE-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A...
+-----END CERTIFICATE-----</code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_der"><a class="anchor" href="#_der"></a>7.2. DER</h3>
+<div class="ulist">
+<ul>
+<li>
+<p>The DER format is simply a binary form of a certificate instead of the
+ASCII PEM format.</p>
+</li>
+<li>
+<p>It sometimes has a file extension of .der but it often has a file extension
+of .cer so the only way to tell the difference between a DER .cer file and a
+PEM .cer file is to open it in a text editor and look for the BEGIN/END
+statements.</p>
+</li>
+<li>
+<p>All types of certificates and private keys can be encoded in DER format.</p>
+</li>
+</ul>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_pkcs5"><a class="anchor" href="#_pkcs5"></a>7.3. PKCS#5</h3>
+<div class="ulist">
+<ul>
+<li>
+<p>Password-Based Encryption Standard.</p>
+</li>
+<li>
+<p>Protecting private keys with passwords.</p>
+</li>
+<li>
+<p>Replaced by <code>PKCS#12</code> (which is more general) and <code>PKCS#8</code> for key storage.
+<a href="http://tools.ietf.org/html/rfc2898">RFC2898</a></p>
+</li>
+</ul>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_pkcs8"><a class="anchor" href="#_pkcs8"></a>7.4. PKCS#8</h3>
+<div class="ulist">
+<ul>
+<li>
+<p>Standard syntax for storing private keys.</p>
+</li>
+<li>
+<p>It Can be encrypted or unencrypted.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text">Unencrypted:
+-----BEGIN PRIVATE KEY-----
+...
+-----END PRIVATE KEY-----
+
+Encrypted:
+-----BEGIN ENCRYPTED PRIVATE KEY-----
+...
+-----END ENCRYPTED PRIVATE KEY-----</code></pre>
+</div>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>PKCS#8 is a private key syntax for all algorithms and not just RSA. On the
+other hand, PKCS#1 is primarily for using the RSA algorithm.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_pkcs10"><a class="anchor" href="#_pkcs10"></a>7.5. PKCS#10</h3>
+<div class="ulist">
+<ul>
+<li>
+<p>Certificate Signing Request (CSR) format. Refer to the
+<a href="#generate-csr">generate csr</a> section.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text">-----BEGIN CERTIFICATE REQUEST-----
+...
+-----END CERTIFICATE REQUEST-----</code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_pkcs11"><a class="anchor" href="#_pkcs11"></a>7.6. PKCS#11</h3>
+<div class="ulist">
+<ul>
+<li>
+<p>Defines a platform-independent API known as <code>Cryptoki</code>
+(“Cryptographic Token Interface”).</p>
+</li>
+<li>
+<p>It allows applications to interact with cryptographic tokens — such as
+Hardware Security Modules (HSMs), smart cards,or TPMs, OP-TEE.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>PKCS#11 Module is a Module that has an API for accessing Crypto Hardware such
+as HSM (Hardware Security Module), Smart Card, and Crypto Tokens
+(e.g., USB Token), and it is an S/W Library provided by H/W Vendor. It is also
+called Cryptoki Module, and Cryptoki is a character made by shortening the
+Cryptographic Token Interface.</p>
+</div>
+<div class="paragraph">
+<p>A <code>slot</code> represents a connection point where a token can be present.
+🧠 Think of a slot as the “reader.”</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text">Slot 0 — Smart card reader
+Slot 1 — Software token (SoftHSM)</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>A <code>token</code> is the actual cryptographic module inserted into a slot.
+🧠 Think of the token as the “smart card” or “HSM chip” that does crypto operations.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text">Token Label: “SecureKeyStore”
+Manufacturer: “Osmosis Security HSM”
+Serial Number: 123456</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>An <code>object</code> is a data item stored on a token.
+🧠 Think of an object as the “file” or “record” stored inside the token.</p>
+</div>
+<div class="paragraph">
+<p>There are different types of objects:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Data objects → arbitrary user data</p>
+</li>
+<li>
+<p>Key objects → private, public, or secret keys</p>
+</li>
+<li>
+<p>Certificate objects → X.509 certs</p>
+</li>
+</ul>
+</div>
+<div class="sect3">
+<h4 id="_pkcs11_with_op_tee"><a class="anchor" href="#_pkcs11_with_op_tee"></a>7.6.1. PKCS#11 with OP-TEE</h4>
+<div class="ulist">
+<ul>
+<li>
+<p>List available slots.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">pkcs11-tool <span class="nt">--module</span> /usr/lib/libckteec.so <span class="nt">-L</span></code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text">Available slots:
+Slot 0 (0x0): OP-TEE PKCS#11 Token (User)
+  token label        : OP-TEE Token
+  token manufacturer : Linaro
+  token model        : OP-TEE
+  serial num         : 0000000000000000
+  flags              : login required, rng, token initialized</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Initialize token (first time only) and pin.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">pkcs11-tool <span class="nt">--module</span> /usr/lib/libckteec.so <span class="nt">--init-token</span> <span class="nt">--label</span> <span class="s2">"TEE-Token"</span>
+pkcs11-tool <span class="nt">--module</span> /usr/lib/libckteec.so <span class="nt">--init-pin</span> <span class="nt">--pin</span> 1234</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Generate RSA key pair inside secure enclave.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">pkcs11-tool <span class="nt">--module</span> /usr/lib/libckteec.so <span class="se">\</span>
+  <span class="nt">--login</span> <span class="nt">--pin</span> 1234 <span class="se">\</span>
+  <span class="nt">--keypairgen</span> <span class="nt">--key-type</span> RSA:2048 <span class="nt">--id</span> 01 <span class="nt">--label</span> <span class="s2">"TEE-RSA-Key"</span></code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>After generating the key list the URI.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">pkcs11-tool <span class="nt">--module</span> /usr/lib/libckteec.so <span class="nt">--list-objects</span> <span class="nt">--login</span> <span class="nt">--pin</span> 1234 <span class="se">\</span>
+<span class="nt">--type</span> privkey <span class="nt">--output-format</span> pkcs11</code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text">pkcs11:token=TEE-Token;object=TEE-RSA-Key;id=%01;type=private</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Now you can use it directly with openssl.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">openssl pkeyutl <span class="nt">-sign</span> <span class="se">\</span>
+  <span class="nt">-engine</span> pkcs11 <span class="se">\</span>
+  <span class="nt">-keyform</span> engine <span class="se">\</span>
+  <span class="nt">-inkey</span> <span class="s1">'pkcs11:token=TEE-Token;id=%01;type=private'</span> <span class="se">\</span>
+  <span class="nt">-in</span> data.txt <span class="nt">-out</span> sig.bin</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>List the objects.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">pkcs11-tool <span class="nt">--list-slots</span> <span class="nt">--module</span> /usr/lib/libckteec.so.0 <span class="nt">--login</span> <span class="se">\</span>
+<span class="nt">--pin</span> 12345678 <span class="nt">--list-objects</span></code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text">Available slots:
+Slot 0 (0x0): OP-TEE PKCS11 TA - TEE UUID 55630e1a-0f9a-58e6-bf33-4cecc7d0b897
+  token label        : optee
+  token manufacturer : Linaro
+  token model        : OP-TEE TA
+  token flags        : login required, rng, SO PIN count low, token initialized, PIN initialized
+  hardware version   : 0.0
+  firmware version   : 0.1
+  serial num         : 0000000000000000
+  pin min/max        : 4/128
+Slot 1 (0x1): OP-TEE PKCS11 TA - TEE UUID 55630e1a-0f9a-58e6-bf33-4cecc7d0b897
+  token state:   uninitialized
+Slot 2 (0x2): OP-TEE PKCS11 TA - TEE UUID 55630e1a-0f9a-58e6-bf33-4cecc7d0b897
+  token state:   uninitialized
+Using slot 0 with a present token (0x0)
+Secret Key Object; AES length 32
+  label:      -aes-key
+  ID:         cafebabe
+  Usage:      encrypt, decrypt
+  Access:     none</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Make the <code>Cryptoki API</code> available to Linux user-space applications:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Uses the <code>ckteec</code> library, which is licensed under the 2-clause BSD license
+and available in <code>optee_client.git</code>.</p>
+</li>
+<li>
+<p>Translates <code>Cryptoki API</code> calls into messages that invoke TA commands and
+arguments in a GPD TEE.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>The <code>PKCS#11</code> token is implemented as an <code>OP-TEE</code> Trusted Application (TA):</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Uses <code>GPD TEE APIs</code> for secure storage and cryptography.</p>
+</li>
+<li>
+<p>Fully implements the PKCS#11 specification.</p>
+</li>
+<li>
+<p>Licensed under the 2-clause BSD license and available in optee_os.git.</p>
+</li>
+</ul>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_pkcs12"><a class="anchor" href="#_pkcs12"></a>7.7. PKCS#12</h3>
+<div class="ulist">
+<ul>
+<li>
+<p>Container format for storing private key + certificate chain.</p>
+</li>
+<li>
+<p>It is used to bundle a private key with its X.509 or to bundle all the members
+of a chain of trust.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">openssl pkcs12 <span class="nt">-export</span> <span class="nt">-out</span> bundle.p12 <span class="nt">-inkey</span> private.key <span class="nt">-in</span> cert.crt <span class="se">\</span>
+<span class="nt">-certfile</span> ca.crt</code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_pkcs7"><a class="anchor" href="#_pkcs7"></a>7.8. PKCS#7</h3>
+<div class="ulist">
+<ul>
+<li>
+<p>PKCS#7 defines a general syntax for cryptographic messages such as signed
+data, encrypted data, digested data, or authenticated data.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>It’s used in:
+- S/MIME (secure email)
+- Certificate bundles
+- Code signing
+- Firmware update packages</p>
+</div>
+<div class="sect3">
+<h4 id="_sign_message_pkcs7"><a class="anchor" href="#_sign_message_pkcs7"></a>7.8.1. Sign message PKCS#7</h4>
+<div class="paragraph">
+<p>It is necessary to know how digital signatures are produced and verified, before
+moving on to PKCS#7 SignedData.</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Generate a private key and certificate.</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">openssl genrsa <span class="nt">-out</span> private.key 2048
+openssl req <span class="nt">-x509</span> <span class="nt">-new</span> <span class="nt">-key</span> private.key <span class="nt">-out</span> cert.pem <span class="nt">-days</span> 365 <span class="se">\</span>
+  <span class="nt">-subj</span> <span class="s2">"/C=US/ST=CA/L=SanJose/O=Osmosis Solutions/CN=example.com"</span></code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Create a message file</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash"><span class="nb">echo</span> <span class="s2">"Hello, this is a PKCS#7 signing example."</span> <span class="o">&gt;</span> message.txt</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Sign the message using PKCS#7 (CMS)</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">openssl smime <span class="nt">-sign</span> <span class="se">\</span>
+  <span class="nt">-in</span> message.txt <span class="se">\</span>
+  <span class="nt">-signer</span> cert.pem <span class="se">\</span>
+  <span class="nt">-inkey</span> private.key <span class="se">\</span>
+  <span class="nt">-out</span> signed.p7s <span class="se">\</span>
+  <span class="nt">-outform</span> PEM</code></pre>
+</div>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-note" title="Note"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>If you want only the signature (detached), use -nodetach</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">openssl smime <span class="nt">-sign</span> <span class="nt">-in</span> message.txt <span class="nt">-signer</span> cert.pem <span class="nt">-inkey</span> private.key <span class="se">\</span>
+  <span class="nt">-out</span> signed.p7s <span class="nt">-outform</span> PEM <span class="nt">-nodetach</span></code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>View the signed message structure</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">openssl pkcs7 <span class="nt">-in</span> signed.p7s <span class="nt">-print_certs</span> <span class="nt">-text</span> <span class="nt">-noout</span></code></pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="text">Certificate:
+    Data:
+        Version: 3 (0x2)
+        Serial Number:
+            78:3c:3a:b0:3a:59:89:eb:3a:a8:17:2b:88:19:79:c2:86:06:f7:04
+        Signature Algorithm: sha256WithRSAEncryption
+        Issuer: C=US, ST=CA, L=SanJose, O=Osmosis Solutions, CN=example.com
+        Validity
+            Not Before: Oct 22 03:09:00 2025 GMT
+            Not After : Oct 22 03:09:00 2026 GMT
+        Subject: C=US, ST=CA, L=SanJose, O=Osmosis Solutions, CN=example.com
+        Subject Public Key Info:
+            Public Key Algorithm: rsaEncryption
+                Public-Key: (2048 bit)
+                Modulus:
+                    00:d1:6b:93:66:7c:0b:12:d0:48:22:2b:fa:0b:50:
+                    ......
+                    91:89
+                Exponent: 65537 (0x10001)
+        X509v3 extensions:
+            X509v3 Subject Key Identifier:
+                72:53:8E:21:60:0E:58:F9:D1:0C:5D:78:4D:C6:92:92:49:20:E5:4D
+            X509v3 Authority Key Identifier:
+                72:53:8E:21:60:0E:58:F9:D1:0C:5D:78:4D:C6:92:92:49:20:E5:4D
+            X509v3 Basic Constraints: critical
+                CA:TRUE
+    Signature Algorithm: sha256WithRSAEncryption
+    Signature Value:
+        0b:11:0e:bc:c8:c7:2a:8a:fb:ad:1b:62:a9:b0:1d:65:8d:d0:
+        ....
+        92:0e:b0:10</code></pre>
+</div>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Verify the signature</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="rouge highlight"><code data-lang="bash">openssl smime <span class="nt">-verify</span> <span class="se">\</span>
+  <span class="nt">-in</span> signed.p7s <span class="se">\</span>
+  <span class="nt">-inform</span> PEM <span class="se">\</span>
+  <span class="nt">-content</span> message.txt <span class="se">\</span>
+  <span class="nt">-noverify</span> <span class="se">\</span>
+  <span class="nt">-out</span> verified.txt</code></pre>
+</div>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 12.5%;">
+<col style="width: 25%;">
+<col style="width: 25%;">
+<col style="width: 25%;">
+<col style="width: 12.5%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Format / Standard</th>
+<th class="tableblock halign-left valign-top">Purpose</th>
+<th class="tableblock halign-left valign-top">Contains</th>
+<th class="tableblock halign-left valign-top">Common Extension</th>
+<th class="tableblock halign-left valign-top">Encoding</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">PEM</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">General container</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Certs / Keys</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">.pem, .crt, .key</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Base64</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">DER</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Binary form</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Certs / Keys</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">.der, .cer</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Binary</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">PKCS#5</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Password-based key derivation</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">—</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">—</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">—</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">PKCS#8</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Private key format</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Private key</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">.p8, .key</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">PEM/DER</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">PKCS#10</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Certificate Signing Request</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">CSR info + signature</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">.csr</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">PEM/DER</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">PKCS#12</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Key + certificate chain container</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Private key + certs</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">.p12, .pfx</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Binary</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">PKCS#7 (CMS)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Signed/encrypted message or cert chain. <strong>Uses private key for signing but does not contain it.</strong></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Certs, signatures, encrypted data</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">.p7b, .p7c</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Binary/PEM</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_refrences"><a class="anchor" href="#_refrences"></a>8. Refrences</h2>
+<div class="sectionbody">
+<div class="ulist">
+<ul>
+<li>
+<p><a href="https://datatracker.ietf.org/doc/html/rfc2898" class="bare">https://datatracker.ietf.org/doc/html/rfc2898</a></p>
+</li>
+<li>
+<p><a href="https://cryptography.io/en/latest/hazmat/primitives/asymmetric/rsa/" class="bare">https://cryptography.io/en/latest/hazmat/primitives/asymmetric/rsa/</a></p>
+</li>
+<li>
+<p><a href="https://www.digitalocean.com/community/tutorials/openssl-essentials-working-with-ssl-certificates-private-keys-and-csrs" class="bare">https://www.digitalocean.com/community/tutorials/openssl-essentials-working-with-ssl-certificates-private-keys-and-csrs</a></p>
+</li>
+<li>
+<p><a href="https://www.cem.me/20150104-cert-binaries-2.html" class="bare">https://www.cem.me/20150104-cert-binaries-2.html</a></p>
+</li>
+<li>
+<p><a href="https://static.linaro.org/connect/lvc21/presentations/lvc21-215.pdf" class="bare">https://static.linaro.org/connect/lvc21/presentations/lvc21-215.pdf</a></p>
+</li>
+</ul>
+</div>
+</div>
+</div>
+</div>
+<div id="footer">
+<div id="footer-text">
+Last updated 2026-03-28 23:50:28 -0400
+</div>
+</div>
+</body>
+</html>
